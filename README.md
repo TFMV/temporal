@@ -45,35 +45,6 @@ Implements vectorized operations on Arrow data for efficient processing.
 
 Provides a flexible interface for configuring and running the pipeline.
 
-## Implementation Details
+## License
 
-### Zero-Copy Operations with Arrow Flight
-
-The pipeline uses Arrow Flight for direct memory sharing between activities:
-
-```go
-// Store a batch in the Flight server
-batchID, err := flightClient.PutBatch(ctx, batch)
-
-// Retrieve a batch from the Flight server
-retrievedBatch, err := flightClient.GetBatch(ctx, batchID)
-```
-
-### Vectorized Processing
-
-Arrow's columnar format enables efficient vectorized operations:
-
-```go
-// Filter rows based on a threshold
-filteredBatch, err := arrow.FilterBatch(batch, threshold)
-```
-
-## Known Limitations
-
-- **Schema Flexibility**: The current implementation uses a fixed schema
-- **Memory Management**: Large datasets may require careful memory management
-- **Error Handling**: Error recovery could be improved for production use
-- **Data Type Support**: Limited to a subset of Arrow data types
-- **Serialization Overhead**: Minimized but not eliminated with Arrow Flight
-- **Temporal Payload Size Limits**: Bypassed with Arrow Flight for large datasets
-- **Compute Utilization**: Could be further optimized with SIMD instructions
+[MIT](LICENSE)
