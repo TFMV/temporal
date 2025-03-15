@@ -1,15 +1,16 @@
 # High-Performance Data Pipeline with Temporal and Apache Arrow
 
-This project implements a high-performance data processing pipeline using [Temporal](https://temporal.io/) for workflow orchestration and [Apache Arrow](https://arrow.apache.org/) for efficient in-memory data representation and processing. The implementation focuses on optimizing memory usage and leveraging zero-copy operations to handle large datasets efficiently.
+This project implements a high-performance data processing pipeline that combines [Temporal](https://temporal.io/) for reliable workflow orchestration with [Apache Arrow](https://arrow.apache.org/) for efficient in-memory data representation. The implementation focuses on optimizing memory usage, leveraging zero-copy operations, and utilizing gRPC for efficient data transfer between workflow activities.
 
-## Features
+## Key Features
 
-- **Streaming Processing**: Process data in RecordBatches
+- **Streaming Record Batch Processing**: Process data in manageable chunks (RecordBatches) rather than loading entire datasets into memory
 - **Zero-Copy Operations**: Minimize memory copies during data transfer between activities
 - **Vectorized Execution**: Process data in columnar format for better CPU cache utilization and SIMD operations
-- **Fault Tolerance**: Leverage Temporal's reliability features for automatic retries and workflow resumption
-- **Memory Efficiency**: Control memory usage through batch processing and explicit memory management
-- **Scalability**: Distribute processing across multiple workers and handle datasets of any size
+- **Optimized gRPC Transport**: Custom gRPC configuration for high-throughput data transfer
+- **Automatic Chunking**: Intelligent splitting of large batches to avoid gRPC message size limits
+- **Fault Tolerance**: Temporal's reliability features for automatic retries and workflow resumption
+- **Progress Tracking**: Heartbeat mechanism to track progress of long-running activities
 
 ## Architecture
 
@@ -21,16 +22,18 @@ The architecture combines Temporal's workflow orchestration capabilities with Ap
 2. **Streaming Workflow**: Temporal workflow that coordinates the processing of data in batches
 3. **Data Processing Activities**: Activities that generate, process, and store Arrow RecordBatches
 4. **Batch Processors**: Implementations of the BatchProcessor interface for specific data operations
-5. **Command-line Interface**: CLI for starting workers and workflows with configurable parameters
+5. **Optimized gRPC Transport**: Custom gRPC configuration for efficient data transfer
+6. **Command-line Interface**: CLI for starting workers and workflows with configurable parameters
 
 ### Workflow Orchestration
 
 The streaming workflow orchestrates the data pipeline by:
 
 1. Generating data batches (or reading from a source)
-2. Processing each batch through filtering or transformation activities
-3. Storing or forwarding the processed batches
-4. Tracking progress and handling failures
+2. Automatically splitting large batches into manageable chunks
+3. Processing each batch/chunk through filtering or transformation activities
+4. Storing or forwarding the processed batches
+5. Tracking progress and handling failures
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -50,10 +53,9 @@ The streaming workflow orchestrates the data pipeline by:
 ### Data Flow
 
 1. **Data Generation/Ingestion**: Create or read data into Arrow RecordBatches
-2. **Serialization**: Convert RecordBatches to Temporal payloads with minimal copying
+2. **Batch Size Evaluation**: Check if batches need to be split into smaller chunks
 3. **Processing**: Apply vectorized operations on the columnar data
-4. **Deserialization**: Convert Temporal payloads back to RecordBatches with zero-copy where possible
-5. **Storage/Output**: Store or forward the processed data
+4. **Storage/Output**: Store or forward the processed data
 
 ## Implementation Details
 
@@ -62,9 +64,7 @@ The streaming workflow orchestrates the data pipeline by:
 The implementation minimizes memory copies by:
 
 - Using Arrow's IPC format for efficient serialization/deserialization
-- Retaining Arrow Records to prevent premature release
 - Ensuring native endianness to avoid byte swapping
-- Explicit memory management with careful `Release()` calls
 
 ### Vectorized Processing
 
@@ -88,13 +88,52 @@ for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
 }
 ```
 
-### Streaming Processing
+### gRPC Transport
 
-The implementation:
+The implementation uses gRPC configuration to optimize data transfer:
 
-- Processes data in manageable chunks (RecordBatches)
-- Controls memory usage through batch size configuration
-- Enables processing of datasets larger than available memory
+- Keepalive parameters to maintain connection stability
+- Connection pooling for better resource utilization
+
+```go
+// Set up gRPC options
+return []grpc.DialOption{
+    grpc.WithTransportCredentials(insecure.NewCredentials()),
+    grpc.WithKeepaliveParams(kaParams),
+    grpc.WithDefaultCallOptions(
+        grpc.MaxCallRecvMsgSize(64 * 1024 * 1024), // 64MB max message size
+        grpc.MaxCallSendMsgSize(64 * 1024 * 1024), // 64MB max message size
+    ),
+}
+```
+
+### Automatic Chunking
+
+To handle large datasets efficiently, the workflow automatically splits large batches into smaller chunks:
+
+```go
+// Check if batch is too large for efficient gRPC transport
+if int(batch.NumRows()) > defaultMaxBatchSize {
+    logger.Info("Batch is too large, splitting into smaller chunks", 
+        "batchNumber", i, 
+        "rows", batch.NumRows(), 
+        "maxBatchSize", defaultMaxBatchSize)
+    
+    // Process the batch in chunks
+    processedCount += processBatchInChunks(ctx, batch, params.Threshold, i)
+}
+```
+
+### Progress Tracking
+
+For long-running activities, the implementation uses Temporal's heartbeat mechanism:
+
+```go
+// Heartbeat periodically for large batches
+if i > 0 && i%10000 == 0 {
+    activity.RecordHeartbeat(ctx, i)
+}
+```
 
 ## Known Limitations
 
@@ -102,66 +141,21 @@ The implementation:
 
 2. **Memory Management**: While the implementation aims for efficient memory usage, it still requires careful tuning of batch sizes to avoid out-of-memory errors with very large datasets.
 
-3. **Error Handling**: Error recovery at the batch level is implemented, but partial batch failures may require custom handling depending on the use case.
+3. **Error Handling**: The implementation includes basic error handling with retries, but partial batch failures may require custom handling depending on the use case.
 
 4. **Data Type Support**: The implementation primarily focuses on common data types (numeric, string). Complex nested types may require additional handling.
 
 5. **Serialization Overhead**: Despite optimizations, there is still some overhead in serializing/deserializing Arrow data for Temporal activities.
 
-6. **Temporal Payload Size Limits**: Very large batches may exceed Temporal's default payload size limits and require configuration adjustments.
+6. **Temporal Payload Size Limits**: Very large batches may exceed Temporal's default payload size limits. The implementation addresses this with increased gRPC message size limits and automatic chunking, but there are still practical upper bounds.
 
 7. **Compute Utilization**: While vectorized operations are efficient, the current implementation doesn't fully leverage GPU acceleration or advanced SIMD optimizations.
 
-## Project Structure
+8. **Security**: The current gRPC implementation uses insecure credentials for simplicity. Production deployments should use proper TLS credentials.
 
-```
-temporal/
-├── cmd/
-│   └── pipeline/         # Command-line interface for the pipeline
-│       └── main.go       # Entry point for running workers and workflows
-├── pkg/
-│   ├── arrow/            # Arrow utilities and data converter
-│   │   ├── arrow_converter.go  # Custom Temporal DataConverter for Arrow
-│   │   └── arrow_utils.go      # Arrow serialization and processing utilities
-│   └── workflow/         # Temporal workflows and activities
-│       └── streaming_workflow.go  # Implementation of the streaming workflow
-└── README.md             # This documentation
-```
+9. **Chunk Extraction Efficiency**: The current chunk extraction approach processes the entire batch but only keeps rows in the specified range. A more efficient implementation would extract only the needed rows from the batch.
 
-## Getting Started
-
-### Prerequisites
-
-- Go 1.16 or later
-- Temporal server running locally or accessible remotely
-
-### Building
-
-```bash
-go build -o pipeline ./cmd/pipeline
-```
-
-### Running
-
-Start a worker:
-
-```bash
-./pipeline -worker -task-queue arrow-pipeline
-```
-
-Start a workflow:
-
-```bash
-./pipeline -workflow -task-queue arrow-pipeline -batch-size 1000 -num-batches 10 -threshold 500
-```
-
-## Benchmarking
-
-The implementation has been optimized for performance. Key metrics:
-
-- **Memory Usage**: Controlled through batch size configuration
-- **Processing Speed**: Improved through vectorized operations
-- **Serialization Overhead**: Minimized with Arrow's IPC format
+10. **Worker Resource Management**: The implementation doesn't include advanced worker resource management. In production, you might need to implement more sophisticated resource allocation strategies.
 
 ## Performance Optimizations
 
@@ -170,28 +164,17 @@ The implementation has been optimized for performance. Key metrics:
 3. **Type-aware Processing**: Strong typing is used for better performance
 4. **Batch Processing**: Operations are performed on batches to maximize throughput
 5. **Memory Reuse**: Builders and arrays are reused where possible to reduce GC pressure
+6. **gRPC Optimization**: Custom gRPC configuration for efficient data transfer
+7. **Worker Configuration**: Optimized worker settings for handling large data volumes
+8. **Automatic Chunking**: Intelligent splitting of large batches to avoid gRPC message size limits
 
-## Extending the Pipeline
+## Future Improvements
 
-To extend the pipeline with new processing capabilities:
-
-1. Implement the `BatchProcessor` interface for your specific operation
-2. Create a new activity that uses your processor
-3. Update the workflow to include your new activity
-
-Example of a custom batch processor:
-
-```go
-type MyCustomProcessor struct {
-    // Configuration parameters
-}
-
-func (p *MyCustomProcessor) ProcessBatch(batch arrow.Record, config map[string]string) (arrow.Record, error) {
-    // Implement your custom processing logic
-    return processedBatch, nil
-}
-
-func (p *MyCustomProcessor) Release() {
-    // Clean up any resources
-}
-```
+1. **Dynamic Schema Support**: Enhance the implementation to handle evolving schemas
+2. **GPU Acceleration**: Integrate with Arrow CUDA for GPU-accelerated processing
+3. **Advanced Monitoring**: Add detailed metrics and monitoring for performance analysis
+4. **Resource-aware Scheduling**: Implement resource-aware scheduling for better utilization
+5. **Compression**: Add support for compression to reduce network transfer sizes
+6. **Security Enhancements**: Implement proper TLS and authentication for production use
+7. **More Efficient Chunk Extraction**: Optimize the chunk extraction process to avoid processing the entire batch
+8. **Parallel Chunk Processing**: Process chunks in parallel for better throughput
