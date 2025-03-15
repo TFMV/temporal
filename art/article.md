@@ -2,6 +2,8 @@
 
 ## Data Transfer Bottlenecks
 
+> I believe, deeply, that if we can make data movement instantaneous, we change the world.
+
 Data moves. Workflows crash. Scaling stalls out - until now.
 
 By combining Temporal for orchestration and Apache Arrow Flight for high-speed data transfer, we built a pipeline that skips the usual slowdowns. No bloated serialization. No wasteful copies. Just raw, efficient movement of data - fast, scalable, and forged for the real fight.
