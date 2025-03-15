@@ -1,3 +1,6 @@
+// DEPRECATED: These activities are deprecated in favor of the Flight-based activities.
+// See pkg/workflow/flight_activities.go for the new implementation.
+
 package activities
 
 import (

@@ -1,3 +1,6 @@
+// DEPRECATED: This workflow implementation is deprecated in favor of the Flight-based implementation.
+// See flight_workflow.go for the new implementation.
+
 package workflow
 
 import (

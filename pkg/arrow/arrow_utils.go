@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math/rand"
 
 	"github.com/apache/arrow/go/v18/arrow"
 	"github.com/apache/arrow/go/v18/arrow/array"
@@ -591,4 +592,199 @@ func (w *FileBatchWriter) Close() error {
 		return err
 	}
 	return w.file.Close()
+}
+
+// GenerateRandomBatch creates a new Arrow batch with random data
+func GenerateRandomBatch(batchSize int) (arrow.Record, error) {
+	// Create a memory allocator
+	allocator := memory.NewGoAllocator()
+
+	// Create a schema
+	schema := arrow.NewSchema(
+		[]arrow.Field{
+			{Name: "id", Type: arrow.PrimitiveTypes.Int32},
+			{Name: "value", Type: arrow.PrimitiveTypes.Float64},
+		},
+		nil,
+	)
+
+	// Create builders
+	idBuilder := array.NewInt32Builder(allocator)
+	defer idBuilder.Release()
+
+	valueBuilder := array.NewFloat64Builder(allocator)
+	defer valueBuilder.Release()
+
+	// Add data
+	ids := make([]int32, batchSize)
+	values := make([]float64, batchSize)
+
+	for i := 0; i < batchSize; i++ {
+		ids[i] = int32(i)
+		values[i] = rand.Float64() * 100 // Random value between 0 and 100
+	}
+
+	idBuilder.AppendValues(ids, nil)
+	valueBuilder.AppendValues(values, nil)
+
+	// Create arrays
+	idArray := idBuilder.NewArray()
+	defer idArray.Release()
+
+	valueArray := valueBuilder.NewArray()
+	defer valueArray.Release()
+
+	// Create record
+	columns := []arrow.Array{idArray, valueArray}
+	batch := array.NewRecord(schema, columns, int64(batchSize))
+
+	return batch, nil
+}
+
+// FilterBatch filters an Arrow batch based on a threshold
+func FilterBatch(batch arrow.Record, threshold float64) (arrow.Record, error) {
+	// Check if the batch has a "value" column
+	valueIdx := -1
+	for i, field := range batch.Schema().Fields() {
+		if field.Name == "value" && field.Type.ID() == arrow.FLOAT64 {
+			valueIdx = i
+			break
+		}
+	}
+
+	if valueIdx == -1 {
+		return nil, fmt.Errorf("batch does not have a float64 'value' column")
+	}
+
+	// Get the value column
+	valueCol := batch.Column(valueIdx).(*array.Float64)
+
+	// Create a validity mask
+	numRows := int(batch.NumRows())
+	validityMask := make([]bool, numRows)
+	validCount := 0
+
+	for i := 0; i < numRows; i++ {
+		if valueCol.Value(i) > threshold {
+			validityMask[i] = true
+			validCount++
+		}
+	}
+
+	// If no rows match, return an empty batch with the same schema
+	if validCount == 0 {
+		return array.NewRecord(batch.Schema(), make([]arrow.Array, batch.NumCols()), 0), nil
+	}
+
+	// Create a new batch with only the valid rows
+	allocator := memory.NewGoAllocator()
+	builders := make([]array.Builder, batch.NumCols())
+	arrays := make([]arrow.Array, batch.NumCols())
+
+	// Initialize builders for each column
+	for i, field := range batch.Schema().Fields() {
+		builders[i] = array.NewBuilder(allocator, field.Type)
+		defer builders[i].Release()
+	}
+
+	// Copy valid rows to the new batch
+	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if !validityMask[rowIdx] {
+			continue
+		}
+
+		// Copy each column's value
+		for colIdx := 0; colIdx < int(batch.NumCols()); colIdx++ {
+			col := batch.Column(colIdx)
+			switch col.DataType().ID() {
+			case arrow.INT32:
+				builders[colIdx].(*array.Int32Builder).Append(col.(*array.Int32).Value(rowIdx))
+			case arrow.FLOAT64:
+				builders[colIdx].(*array.Float64Builder).Append(col.(*array.Float64).Value(rowIdx))
+			case arrow.STRING:
+				builders[colIdx].(*array.StringBuilder).Append(col.(*array.String).Value(rowIdx))
+			default:
+				return nil, fmt.Errorf("unsupported data type: %s", col.DataType().Name())
+			}
+		}
+	}
+
+	// Build arrays
+	for i := 0; i < int(batch.NumCols()); i++ {
+		arrays[i] = builders[i].NewArray()
+		defer arrays[i].Release()
+	}
+
+	// Create the filtered record
+	filteredBatch := array.NewRecord(batch.Schema(), arrays, int64(validCount))
+	return filteredBatch, nil
+}
+
+// CombineBatches combines multiple Arrow batches into a single batch
+func CombineBatches(batches []arrow.Record) (arrow.Record, error) {
+	if len(batches) == 0 {
+		return nil, fmt.Errorf("no batches to combine")
+	}
+
+	if len(batches) == 1 {
+		// If there's only one batch, just return it
+		batches[0].Retain()
+		return batches[0], nil
+	}
+
+	// Check that all batches have the same schema
+	schema := batches[0].Schema()
+	for i := 1; i < len(batches); i++ {
+		if !schema.Equal(batches[i].Schema()) {
+			return nil, fmt.Errorf("batch %d has a different schema", i)
+		}
+	}
+
+	// Calculate the total number of rows
+	var totalRows int64
+	for _, batch := range batches {
+		totalRows += batch.NumRows()
+	}
+
+	// Create builders for each column
+	allocator := memory.NewGoAllocator()
+	builders := make([]array.Builder, schema.NumFields())
+	arrays := make([]arrow.Array, schema.NumFields())
+
+	for i, field := range schema.Fields() {
+		builders[i] = array.NewBuilder(allocator, field.Type)
+		defer builders[i].Release()
+	}
+
+	// Copy data from each batch
+	for _, batch := range batches {
+		for colIdx := 0; colIdx < int(batch.NumCols()); colIdx++ {
+			col := batch.Column(colIdx)
+			builder := builders[colIdx]
+
+			// Copy each value in the column
+			for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+				switch col.DataType().ID() {
+				case arrow.INT32:
+					builder.(*array.Int32Builder).Append(col.(*array.Int32).Value(rowIdx))
+				case arrow.FLOAT64:
+					builder.(*array.Float64Builder).Append(col.(*array.Float64).Value(rowIdx))
+				case arrow.STRING:
+					builder.(*array.StringBuilder).Append(col.(*array.String).Value(rowIdx))
+				default:
+					return nil, fmt.Errorf("unsupported data type: %s", col.DataType().Name())
+				}
+			}
+		}
+	}
+
+	// Build arrays
+	for i := 0; i < int(schema.NumFields()); i++ {
+		arrays[i] = builders[i].NewArray()
+		defer arrays[i].Release()
+	}
+
+	// Create the combined record
+	combinedBatch := array.NewRecord(schema, arrays, totalRows)
+	return combinedBatch, nil
 }
