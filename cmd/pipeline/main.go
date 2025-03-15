@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
@@ -20,7 +21,20 @@ import (
 )
 
 const (
-	// Default values for command line flags
+	// Configuration keys
+	configNamespace     = "namespace"
+	configTaskQueue     = "task-queue"
+	configBatchSize     = "batch-size"
+	configNumBatches    = "num-batches"
+	configThreshold     = "threshold"
+	configWorkerCount   = "workers"
+	configStartWorker   = "worker"
+	configStartWorkflow = "workflow"
+	configWorkflowID    = "workflow-id"
+	configTemporalHost  = "temporal-host"
+	configConfigFile    = "config"
+
+	// Default values
 	defaultNamespace    = "default"
 	defaultTaskQueue    = "arrow-pipeline"
 	defaultBatchSize    = 1000
@@ -31,28 +45,17 @@ const (
 )
 
 func main() {
-	// Parse command line flags
-	namespace := flag.String("namespace", defaultNamespace, "Temporal namespace")
-	taskQueue := flag.String("task-queue", defaultTaskQueue, "Task queue name")
-	batchSize := flag.Int("batch-size", defaultBatchSize, "Size of each data batch")
-	numBatches := flag.Int("num-batches", defaultNumBatches, "Number of batches to process")
-	threshold := flag.Float64("threshold", defaultThreshold, "Threshold value for filtering")
-	workerCount := flag.Int("workers", defaultWorkerCount, "Number of worker goroutines")
-	startWorker := flag.Bool("worker", false, "Start a worker")
-	startWorkflow := flag.Bool("workflow", false, "Start a workflow")
-	workflowID := flag.String("workflow-id", "", "Workflow ID (defaults to a generated ID)")
-	temporalHost := flag.String("temporal-host", defaultTemporalHost, "Temporal server host:port")
-	flag.Parse()
-
-	// Set up gRPC connection options
-	grpcOptions := getGrpcOptions()
+	// Initialize configuration
+	if err := initConfig(); err != nil {
+		log.Fatalf("Failed to initialize configuration: %v", err)
+	}
 
 	// Create a Temporal client with gRPC options
 	c, err := client.Dial(client.Options{
-		Namespace: *namespace,
-		HostPort:  *temporalHost,
+		Namespace: viper.GetString(configNamespace),
+		HostPort:  viper.GetString(configTemporalHost),
 		ConnectionOptions: client.ConnectionOptions{
-			DialOptions: grpcOptions,
+			DialOptions: getGrpcOptions(),
 		},
 	})
 	if err != nil {
@@ -74,28 +77,81 @@ func main() {
 	}()
 
 	// Start worker if requested
-	if *startWorker {
-		startArrowWorker(ctx, c, *taskQueue, *workerCount)
+	if viper.GetBool(configStartWorker) {
+		startArrowWorker(ctx, c, viper.GetString(configTaskQueue), viper.GetInt(configWorkerCount))
 	}
 
 	// Start workflow if requested
-	if *startWorkflow {
-		id := *workflowID
+	if viper.GetBool(configStartWorkflow) {
+		id := viper.GetString(configWorkflowID)
 		if id == "" {
 			id = fmt.Sprintf("arrow-pipeline-%v", time.Now().UnixNano())
 		}
-		startArrowWorkflow(ctx, c, id, *taskQueue, *batchSize, *numBatches, *threshold)
+		startArrowWorkflow(ctx, c, id,
+			viper.GetString(configTaskQueue),
+			viper.GetInt(configBatchSize),
+			viper.GetInt(configNumBatches),
+			viper.GetFloat64(configThreshold))
 	}
 
 	// If neither worker nor workflow was started, print usage
-	if !*startWorker && !*startWorkflow {
-		flag.Usage()
+	if !viper.GetBool(configStartWorker) && !viper.GetBool(configStartWorkflow) {
+		pflag.Usage()
 		os.Exit(1)
 	}
 
 	// Wait for context cancellation (from signal handler)
 	<-ctx.Done()
 	log.Println("Shutdown complete")
+}
+
+// initConfig initializes the configuration using Viper
+func initConfig() error {
+	// Set up command line flags
+	pflag.String(configConfigFile, "", "Config file path (optional)")
+	pflag.String(configNamespace, defaultNamespace, "Temporal namespace")
+	pflag.String(configTaskQueue, defaultTaskQueue, "Task queue name")
+	pflag.Int(configBatchSize, defaultBatchSize, "Size of each data batch")
+	pflag.Int(configNumBatches, defaultNumBatches, "Number of batches to process")
+	pflag.Float64(configThreshold, defaultThreshold, "Threshold value for filtering")
+	pflag.Int(configWorkerCount, defaultWorkerCount, "Number of worker goroutines")
+	pflag.Bool(configStartWorker, false, "Start a worker")
+	pflag.Bool(configStartWorkflow, false, "Start a workflow")
+	pflag.String(configWorkflowID, "", "Workflow ID (defaults to a generated ID)")
+	pflag.String(configTemporalHost, defaultTemporalHost, "Temporal server host:port")
+	pflag.Parse()
+
+	// Bind command line flags to viper
+	if err := viper.BindPFlags(pflag.CommandLine); err != nil {
+		return fmt.Errorf("failed to bind flags: %w", err)
+	}
+
+	// Set environment variable prefix for config
+	viper.SetEnvPrefix("ARROW_PIPELINE")
+	viper.AutomaticEnv() // Read environment variables
+
+	// Read config file if specified
+	if configFile := viper.GetString(configConfigFile); configFile != "" {
+		viper.SetConfigFile(configFile)
+		if err := viper.ReadInConfig(); err != nil {
+			return fmt.Errorf("failed to read config file: %w", err)
+		}
+		log.Printf("Using config file: %s", viper.ConfigFileUsed())
+	} else {
+		// Look for config file in default locations
+		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
+		viper.AddConfigPath(".")
+		viper.AddConfigPath("$HOME/.arrow-pipeline")
+		viper.AddConfigPath("/etc/arrow-pipeline")
+
+		// Try to read config file (ignore error if not found)
+		if err := viper.ReadInConfig(); err == nil {
+			log.Printf("Using config file: %s", viper.ConfigFileUsed())
+		}
+	}
+
+	return nil
 }
 
 // getGrpcOptions returns gRPC dial options optimized for high-performance data transfer
