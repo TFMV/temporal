@@ -6,6 +6,7 @@ require (
 	github.com/apache/arrow/go/v18 v18.0.0-20241007013041-ab95a4d25142
 	github.com/spf13/pflag v1.0.6
 	github.com/spf13/viper v1.19.0
+	github.com/stretchr/testify v1.10.0
 	go.temporal.io/api v1.44.1
 	go.temporal.io/sdk v1.33.0
 	google.golang.org/grpc v1.66.0
@@ -39,7 +40,6 @@ require (
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/spf13/cast v1.6.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.uber.org/atomic v1.9.0 // indirect

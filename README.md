@@ -135,6 +135,53 @@ if i > 0 && i%10000 == 0 {
 }
 ```
 
+## Testing
+
+The project includes tests, with special handling for Temporal-dependent tests.
+
+### Running Tests
+
+To run all tests:
+
+```bash
+go test -v ./...
+```
+
+By default, Temporal-dependent tests are skipped to allow testing without a running Temporal server. To enable Temporal tests:
+
+```bash
+ENABLE_TEMPORAL_TESTS=true go test -v ./...
+```
+
+### Test Categories
+
+1. **Arrow Data Processing Tests**: Tests for Arrow serialization, deserialization, and data processing functions
+   - These tests run without requiring a Temporal server
+   - Focus on verifying data integrity and processing correctness
+
+2. **Temporal Workflow Tests**: Tests for workflow and activity implementations
+   - These tests are skipped by default unless `ENABLE_TEMPORAL_TESTS=true` is set
+   - Require a running Temporal server when enabled
+
+3. **Configuration Tests**: Tests for command-line and configuration handling
+   - Verify proper loading of configuration from different sources (environment variables, command-line flags, config files)
+
+### Test Implementation Details
+
+The tests use several techniques to ensure robustness:
+
+1. **Behavior Verification**: Tests focus on verifying the behavior of functions rather than implementation details
+   - For example, filtering tests verify that all values in the filtered batch meet the threshold criteria
+
+2. **Memory Management**: Tests include proper resource cleanup to avoid memory leaks
+   - Arrow objects are properly released after use
+
+3. **Mocking**: Temporal workflow tests use mocking to avoid actual execution of activities
+   - This allows testing workflow logic without external dependencies
+
+4. **Conditional Execution**: Tests use environment variables to conditionally skip Temporal-dependent tests
+   - This allows running the test suite without a Temporal server
+
 ## Known Limitations
 
 1. **Schema Flexibility**: The current implementation assumes a fixed schema across all batches. Dynamic schema evolution is not fully supported.
@@ -178,3 +225,51 @@ if i > 0 && i%10000 == 0 {
 6. **Security Enhancements**: Implement proper TLS and authentication for production use
 7. **More Efficient Chunk Extraction**: Optimize the chunk extraction process to avoid processing the entire batch
 8. **Parallel Chunk Processing**: Process chunks in parallel for better throughput
+9. **Improved Test Coverage**: Expand test coverage for edge cases and failure scenarios
+10. **Integration Tests**: Add integration tests with a real Temporal server in CI/CD pipeline
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.18 or later
+- Temporal server (for running workflows)
+
+### Building
+
+```bash
+go build -o arrow-pipeline ./cmd/pipeline
+```
+
+### Running
+
+Start a worker:
+
+```bash
+./arrow-pipeline --worker --task-queue=arrow-pipeline
+```
+
+Start a workflow:
+
+```bash
+./arrow-pipeline --workflow --task-queue=arrow-pipeline --batch-size=1000 --num-batches=10 --threshold=500
+```
+
+### Configuration
+
+Configuration can be provided through:
+
+1. Command-line flags
+2. Environment variables (prefixed with `ARROW_PIPELINE_`)
+3. Configuration file (YAML format)
+
+Example configuration file:
+
+```yaml
+namespace: default
+task-queue: arrow-pipeline
+batch-size: 1000
+num-batches: 10
+threshold: 500
+workers: 5
+```
