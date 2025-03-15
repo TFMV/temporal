@@ -21,7 +21,9 @@ A high-performance data processing pipeline using Temporal for workflow orchestr
 
 ![Architecture](art/temporal.png)
 
-The system consists of several key components:
+For details, please click [here](art/spec.md).
+
+## Key Components
 
 ### Arrow Flight Server
 
