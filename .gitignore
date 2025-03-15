@@ -8,6 +8,10 @@
 *.so
 *.dylib
 
+cleanup.sh
+art/diagram.mermaid
+gocheck_artifacts/
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -23,7 +27,3 @@ go.work.sum
 
 # env file
 .env
-cleanup.sh
-article/article.md
-article/diagram.mermaid
-gocheck_artifacts/
