@@ -1,5 +1,8 @@
 # Data Processing Pipeline with Temporal and Apache Arrow
 
+[![Build and Test](https://github.com/TFMV/temporal/actions/workflows/build-test.yml/badge.svg)](https://github.com/TFMV/temporal/actions/workflows/build-test.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/TFMV/temporal)](https://goreportcard.com/report/github.com/TFMV/temporal)
+
 A high-performance data processing pipeline using Temporal for workflow orchestration and Apache Arrow for efficient data handling.
 
 ## Features
