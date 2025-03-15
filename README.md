@@ -18,46 +18,7 @@ The pipeline consists of several key components:
 
 ### System Architecture Diagram
 
-```mermaid
-graph TD
-    classDef temporal fill:#7986CB,stroke:#303F9F,color:white
-    classDef arrow fill:#4DB6AC,stroke:#00796B,color:white
-    classDef flight fill:#FF8A65,stroke:#D84315,color:white
-    classDef storage fill:#9575CD,stroke:#512DA8,color:white
-    classDef worker fill:#4FC3F7,stroke:#0288D1,color:white
-    
-    Client[Client Application] --> Temporal[Temporal Server]
-    
-    subgraph "Workflow Orchestration"
-        Temporal --> WorkflowWorker[Workflow Worker]:::temporal
-        WorkflowWorker --> ActivityWorker1[Activity Worker 1]:::worker
-        WorkflowWorker --> ActivityWorker2[Activity Worker 2]:::worker
-        WorkflowWorker --> ActivityWorker3[Activity Worker 3]:::worker
-    end
-    
-    subgraph "Data Processing"
-        ActivityWorker1 --> |Generate Batch| FlightServer[Arrow Flight Server]:::flight
-        ActivityWorker2 --> |Get & Process Batch| FlightServer
-        ActivityWorker2 --> |Put Processed Batch| FlightServer
-        ActivityWorker3 --> |Get & Store Batch| FlightServer
-        
-        FlightServer --> |Zero-Copy Data Transfer| ArrowMemory[Arrow Memory Format]:::arrow
-        ArrowMemory --> |Columnar Data| VectorizedOps[Vectorized Operations]:::arrow
-    end
-    
-    subgraph "Storage & Cleanup"
-        FlightServer --> |TTL-based Cleanup| BatchCleanup[Batch Cleanup]:::storage
-        ActivityWorker3 --> |Persist Results| DataStore[Data Store]:::storage
-    end
-    
-    style Temporal font-weight:bold
-    style FlightServer font-weight:bold
-    style ArrowMemory font-weight:bold
-```
-
-### Arrow Data Converter
-
-Efficiently serializes and deserializes Arrow data structures for Temporal payloads.
+![Architecture](article/temporal.png)
 
 ### Arrow Flight Server
 
@@ -80,20 +41,6 @@ Implements vectorized operations on Arrow data for efficient processing.
 ### Command-line Interface
 
 Provides a flexible interface for configuring and running the pipeline.
-
-## Workflow Orchestration
-
-```text
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Generate Batch │────▶│  Process Batch  │────▶│   Store Batch   │
-│    Activity     │     │    Activity     │     │    Activity     │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-        │                       │                       │
-        ▼                       ▼                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                       Arrow Flight Server                       │
-└─────────────────────────────────────────────────────────────────┘
-```
 
 ## Implementation Details
 
