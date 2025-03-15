@@ -20,9 +20,6 @@ const (
 	flightInitialInterval    = 1 * time.Second
 	flightMaximumInterval    = 1 * time.Minute
 	flightBackoffCoefficient = 2.0
-
-	// TODO: Default batch processing parameters for Flight workflow
-	flightMaxBatchSize = 50000 // Maximum rows per batch to avoid gRPC message size limits
 )
 
 // FlightWorkflowParams contains all parameters for the Flight workflow

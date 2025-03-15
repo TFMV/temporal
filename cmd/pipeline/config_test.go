@@ -12,7 +12,7 @@ import (
 
 // testInitConfig is a modified version of initConfig that uses a provided FlagSet
 // instead of the global pflag to avoid flag redefinition errors in tests
-func testInitConfig(flagSet *pflag.FlagSet, args []string) error {
+func testInitConfig(t *testing.T, flagSet *pflag.FlagSet, args []string) error {
 	// Set up command line flags on the provided FlagSet
 	flagSet.String(configConfigFile, "", "Config file path (optional)")
 	flagSet.String(configNamespace, defaultNamespace, "Temporal namespace")
@@ -43,16 +43,36 @@ func testInitConfig(flagSet *pflag.FlagSet, args []string) error {
 	viper.SetEnvPrefix("ARROW_PIPELINE")
 
 	// Set up environment variable bindings explicitly
-	viper.BindEnv(configNamespace, "ARROW_PIPELINE_NAMESPACE")
-	viper.BindEnv(configTaskQueue, "ARROW_PIPELINE_TASK_QUEUE")
-	viper.BindEnv(configBatchSize, "ARROW_PIPELINE_BATCH_SIZE")
-	viper.BindEnv(configNumBatches, "ARROW_PIPELINE_NUM_BATCHES")
-	viper.BindEnv(configThreshold, "ARROW_PIPELINE_THRESHOLD")
-	viper.BindEnv(configWorkerCount, "ARROW_PIPELINE_WORKERS")
-	viper.BindEnv(configStartWorker, "ARROW_PIPELINE_WORKER")
-	viper.BindEnv(configStartWorkflow, "ARROW_PIPELINE_WORKFLOW")
-	viper.BindEnv(configWorkflowID, "ARROW_PIPELINE_WORKFLOW_ID")
-	viper.BindEnv(configTemporalHost, "ARROW_PIPELINE_TEMPORAL_HOST")
+	if err := viper.BindEnv(configNamespace, "ARROW_PIPELINE_NAMESPACE"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configTaskQueue, "ARROW_PIPELINE_TASK_QUEUE"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configBatchSize, "ARROW_PIPELINE_BATCH_SIZE"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configNumBatches, "ARROW_PIPELINE_NUM_BATCHES"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configThreshold, "ARROW_PIPELINE_THRESHOLD"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configWorkerCount, "ARROW_PIPELINE_WORKERS"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configStartWorker, "ARROW_PIPELINE_WORKER"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configStartWorkflow, "ARROW_PIPELINE_WORKFLOW"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configWorkflowID, "ARROW_PIPELINE_WORKFLOW_ID"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
+	if err := viper.BindEnv(configTemporalHost, "ARROW_PIPELINE_TEMPORAL_HOST"); err != nil {
+		t.Fatalf("Failed to bind environment variable: %v", err)
+	}
 
 	viper.AutomaticEnv() // Read environment variables
 
@@ -248,7 +268,7 @@ workers: 20
 			flagSet := pflag.NewFlagSet("test", pflag.ContinueOnError)
 
 			// Initialize configuration with the test FlagSet
-			err := testInitConfig(flagSet, tc.flagArgs)
+			err := testInitConfig(t, flagSet, tc.flagArgs)
 			if tc.expectError {
 				assert.Error(t, err)
 				return

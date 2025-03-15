@@ -83,7 +83,7 @@ Provides a flexible interface for configuring and running the pipeline.
 
 ## Workflow Orchestration
 
-```
+```text
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │  Generate Batch │────▶│  Process Batch  │────▶│   Store Batch   │
 │    Activity     │     │    Activity     │     │    Activity     │
@@ -127,70 +127,3 @@ filteredBatch, err := arrow.FilterBatch(batch, threshold)
 - **Serialization Overhead**: Minimized but not eliminated with Arrow Flight
 - **Temporal Payload Size Limits**: Bypassed with Arrow Flight for large datasets
 - **Compute Utilization**: Could be further optimized with SIMD instructions
-
-## Project Structure
-
-```
-temporal/
-├── cmd/
-│   └── pipeline/         # Command-line interface
-├── pkg/
-│   ├── arrow/            # Arrow utilities
-│   ├── flight/           # Arrow Flight implementation
-│   ├── activities/       # Activity implementations
-│   └── workflow/         # Workflow definitions
-└── README.md
-```
-
-## Getting Started
-
-### Prerequisites
-
-- Go 1.18+
-- Temporal server running locally or remotely
-
-### Building
-
-```bash
-go build -o pipeline ./cmd/pipeline
-```
-
-### Running
-
-Start a worker:
-
-```bash
-./pipeline --worker --task-queue=arrow-pipeline
-```
-
-Start a workflow:
-
-```bash
-./pipeline --workflow --task-queue=arrow-pipeline --batch-size=10000 --num-batches=5 --threshold=500 --flight-server=localhost:8080
-```
-
-## Benchmarking
-
-The Arrow Flight implementation significantly reduces serialization overhead compared to the standard approach:
-
-| Batch Size | Standard Approach | Flight Approach | Improvement |
-|------------|------------------|----------------|-------------|
-| 10,000     | 250ms            | 50ms           | 5x          |
-| 100,000    | 2.5s             | 0.3s           | 8.3x        |
-| 1,000,000  | 25s              | 2.5s           | 10x         |
-
-## Extending the Pipeline
-
-To extend the pipeline:
-
-1. Add new activity implementations in `pkg/activities`
-2. Modify the workflow definition in `pkg/workflow/flight_workflow.go`
-3. Update the command-line interface in `cmd/pipeline/main.go`
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.

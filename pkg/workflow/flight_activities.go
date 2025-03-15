@@ -147,7 +147,11 @@ func FlightGenerateBatchActivity(ctx context.Context, batchSize int, flightConfi
 	if err != nil {
 		return "", fmt.Errorf("failed to get Flight context: %w", err)
 	}
-	defer CloseFlightContext(flightCtx)
+	defer func() {
+		if err := CloseFlightContext(flightCtx); err != nil {
+			logger.Error("Failed to close flight context", "error", err)
+		}
+	}()
 
 	// Generate a batch
 	batch, err := generateArrowBatch(batchSize)
@@ -194,7 +198,11 @@ func FlightProcessBatchActivity(ctx context.Context, batchID string, threshold f
 	if err != nil {
 		return "", fmt.Errorf("failed to get Flight context: %w", err)
 	}
-	defer CloseFlightContext(flightCtx)
+	defer func() {
+		if err := CloseFlightContext(flightCtx); err != nil {
+			logger.Error("Failed to close flight context", "error", err)
+		}
+	}()
 
 	// Retrieve the batch from the Flight server
 	batch, err := flightCtx.Client.GetBatch(ctx, batchID)
@@ -248,7 +256,11 @@ func FlightStoreBatchActivity(ctx context.Context, batchID string, flightConfig 
 	if err != nil {
 		return 0, fmt.Errorf("failed to get Flight context: %w", err)
 	}
-	defer CloseFlightContext(flightCtx)
+	defer func() {
+		if err := CloseFlightContext(flightCtx); err != nil {
+			logger.Error("Failed to close flight context", "error", err)
+		}
+	}()
 
 	// Retrieve the batch from the Flight server
 	batch, err := flightCtx.Client.GetBatch(ctx, batchID)
