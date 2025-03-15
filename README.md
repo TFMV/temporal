@@ -1,4 +1,4 @@
-# Data Processing Pipeline with Temporal and Apache Arrow
+# Data Processing Pattern with Temporal and Apache Arrow
 
 [![Build and Test](https://github.com/TFMV/temporal-flight/actions/workflows/build-test.yml/badge.svg)](https://github.com/TFMV/temporal-flight/actions/workflows/build-test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/TFMV/temporal)](https://goreportcard.com/report/github.com/TFMV/temporal)
@@ -17,11 +17,11 @@ A high-performance data processing pipeline using Temporal for workflow orchestr
 
 ## Architecture
 
-The pipeline consists of several key components:
-
 ### System Architecture Diagram
 
 ![Architecture](art/temporal.png)
+
+The system consists of several key components:
 
 ### Arrow Flight Server
 
