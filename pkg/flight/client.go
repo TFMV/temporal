@@ -74,10 +74,6 @@ func (c *FlightClient) Close() error {
 
 // PutBatch sends a batch to the Flight server and returns the batch ID
 func (c *FlightClient) PutBatch(ctx context.Context, batch arrow.Record) (string, error) {
-	// Add a timeout to the context to prevent hanging
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	// Create a Flight descriptor
 	descriptor := &flight.FlightDescriptor{
 		Type: flight.DescriptorCMD,
@@ -102,6 +98,7 @@ func (c *FlightClient) PutBatch(ctx context.Context, batch arrow.Record) (string
 
 	// Write the batch to the stream
 	if err := writer.Write(batch); err != nil {
+		// Make sure to close the writer even if writing fails
 		writer.Close()
 		return "", fmt.Errorf("failed to write batch to stream: %w", err)
 	}
@@ -123,10 +120,6 @@ func (c *FlightClient) PutBatch(ctx context.Context, batch arrow.Record) (string
 
 // GetBatch retrieves a batch from the Flight server by ID
 func (c *FlightClient) GetBatch(ctx context.Context, batchID string) (arrow.Record, error) {
-	// Add a timeout to the context to prevent hanging
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	// Create a Flight ticket
 	ticket := &flight.Ticket{
 		Ticket: []byte(batchID),
@@ -162,10 +155,6 @@ func (c *FlightClient) GetBatch(ctx context.Context, batchID string) (arrow.Reco
 
 // ListBatches lists all batches in the Flight server
 func (c *FlightClient) ListBatches(ctx context.Context) ([]string, error) {
-	// Add a timeout to the context to prevent hanging
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
 	// Create a Flight criteria
 	criteria := &flight.Criteria{}
 
@@ -180,7 +169,11 @@ func (c *FlightClient) ListBatches(ctx context.Context) ([]string, error) {
 	for {
 		info, err := stream.Recv()
 		if err != nil {
-			break
+			// Check if we've reached the end of the stream
+			if err.Error() == "EOF" {
+				break
+			}
+			return nil, fmt.Errorf("error receiving flight info: %w", err)
 		}
 		batchIDs = append(batchIDs, string(info.FlightDescriptor.Cmd))
 	}
