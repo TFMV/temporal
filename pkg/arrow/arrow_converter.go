@@ -22,8 +22,9 @@ const (
 // ArrowDataConverter is a custom Temporal DataConverter that handles Arrow data types
 // with zero-copy operations where possible
 type ArrowDataConverter struct {
-	pool          memory.Allocator
-	baseConverter converter.DataConverter
+	parent     converter.DataConverter
+	pool       memory.Allocator
+	serializer *Serializer
 }
 
 // NewArrowDataConverter creates a new ArrowDataConverter with the specified memory allocator
@@ -31,9 +32,11 @@ func NewArrowDataConverter(pool memory.Allocator) *ArrowDataConverter {
 	if pool == nil {
 		pool = memory.NewGoAllocator()
 	}
+
 	return &ArrowDataConverter{
-		pool:          pool,
-		baseConverter: converter.GetDefaultDataConverter(),
+		parent:     converter.GetDefaultDataConverter(),
+		pool:       pool,
+		serializer: NewSerializer(pool),
 	}
 }
 
@@ -45,8 +48,13 @@ func (c *ArrowDataConverter) ToPayload(value interface{}) (*commonpb.Payload, er
 		return c.recordToPayload(record)
 	}
 
+	// Handle Arrow Table objects
+	if table, ok := value.(arrow.Table); ok {
+		return c.tableToPayload(table)
+	}
+
 	// Fall back to default converter for other types
-	return c.baseConverter.ToPayload(value)
+	return c.parent.ToPayload(value)
 }
 
 // FromPayload converts a Temporal payload to a value
@@ -58,8 +66,14 @@ func (c *ArrowDataConverter) FromPayload(payload *commonpb.Payload, valuePtr int
 		return c.payloadToRecord(payload, valuePtr)
 	}
 
+	// Check if this is an Arrow Table payload
+	if encodingType, ok := payload.Metadata[MetadataEncodingType]; ok && string(encodingType) == "binary/arrow-table" {
+		// Handle Arrow Table deserialization
+		return c.payloadToTable(payload, valuePtr)
+	}
+
 	// Fall back to default converter for other types
-	return c.baseConverter.FromPayload(payload, valuePtr)
+	return c.parent.FromPayload(payload, valuePtr)
 }
 
 // ToPayloads converts multiple values to Temporal payloads
@@ -164,9 +178,50 @@ func (c *ArrowDataConverter) payloadToRecord(payload *commonpb.Payload, valuePtr
 	return nil
 }
 
+// tableToPayload converts an Arrow Table to a Temporal payload
+// This is optimized for minimal copying
+func (c *ArrowDataConverter) tableToPayload(table arrow.Table) (*commonpb.Payload, error) {
+	// Use the serializer to convert the table to bytes
+	data, err := c.serializer.SerializeTable(table)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize Arrow table: %w", err)
+	}
+
+	// Create the payload with Arrow-specific metadata
+	payload := &commonpb.Payload{
+		Metadata: map[string][]byte{
+			MetadataEncodingType: []byte("binary/arrow-table"),
+		},
+		Data: data,
+	}
+
+	return payload, nil
+}
+
+// payloadToTable converts a Temporal payload to an Arrow Table
+// This is optimized for zero-copy operations where possible
+func (c *ArrowDataConverter) payloadToTable(payload *commonpb.Payload, valuePtr interface{}) error {
+	// Check that the target is a pointer to an arrow.Table
+	tablePtr, ok := valuePtr.(*arrow.Table)
+	if !ok {
+		return fmt.Errorf("target value is not a *arrow.Table")
+	}
+
+	// Use the serializer to convert the bytes back to a table
+	table, err := c.serializer.DeserializeTable(payload.Data)
+	if err != nil {
+		return fmt.Errorf("failed to deserialize Arrow table: %w", err)
+	}
+
+	// Set the output value
+	*tablePtr = table
+
+	return nil
+}
+
 // GetDefaultDataConverter returns the default data converter
 func (c *ArrowDataConverter) GetDefaultDataConverter() converter.DataConverter {
-	return c.baseConverter
+	return c.parent
 }
 
 // BatchProcessor is an interface for processing Arrow RecordBatches
@@ -196,4 +251,34 @@ type BatchWriter interface {
 
 	// Close closes the writer and releases any resources
 	Close() error
+}
+
+// ToString converts a payload to a string
+func (c *ArrowDataConverter) ToString(payload *commonpb.Payload) string {
+	// For Arrow types, return a descriptive string
+	if encodingType, ok := payload.Metadata[MetadataEncodingType]; ok {
+		switch string(encodingType) {
+		case "binary/arrow-record":
+			return "[Arrow Record]"
+		case "binary/arrow-table":
+			return "[Arrow Table]"
+		}
+	}
+
+	// Use default converter for other types
+	return c.parent.ToString(payload)
+}
+
+// ToStrings converts payloads to strings
+func (c *ArrowDataConverter) ToStrings(payloads *commonpb.Payloads) []string {
+	if payloads == nil {
+		return nil
+	}
+
+	var result []string
+	for _, payload := range payloads.Payloads {
+		result = append(result, c.ToString(payload))
+	}
+
+	return result
 }

@@ -78,31 +78,21 @@ func (s *Serializer) SerializeTable(table arrow.Table) ([]byte, error) {
 	var buf bytes.Buffer
 
 	// Create an Arrow IPC writer with the table's schema and memory allocator
-	// This maintains the columnar format for efficient serialization
 	writer := ipc.NewWriter(&buf,
 		ipc.WithSchema(table.Schema()),
 		ipc.WithAllocator(s.pool),
-		// Enable dictionary encoding for string columns to reduce size
 		ipc.WithDictionaryDeltas(true))
 	defer writer.Close()
 
-	// Process each record batch in the table
-	for i := 0; i < int(table.NumCols()); i++ {
-		// Get the column's chunked data
-		chunked := table.Column(i).Data()
+	// Create a record batch reader from the table
+	reader := array.NewTableReader(table, 1024) // Process in chunks of 1024 rows
+	defer reader.Release()
 
-		// Process each chunk in the column
-		for j := 0; j < len(chunked.Chunks()); j++ {
-			// Create a record from the chunk
-			record := array.NewRecord(table.Schema(), []arrow.Array{chunked.Chunk(j)}, int64(chunked.Chunk(j).Len()))
-
-			// Write the record to the IPC stream
-			if err := writer.Write(record); err != nil {
-				return nil, fmt.Errorf("failed to serialize record batch: %w", err)
-			}
-
-			// Release the temporary record
-			record.Release()
+	// Read and write each batch
+	for reader.Next() {
+		record := reader.Record()
+		if err := writer.Write(record); err != nil {
+			return nil, fmt.Errorf("failed to serialize record batch: %w", err)
 		}
 	}
 
@@ -351,6 +341,20 @@ func FilterRecordBatch(batch arrow.Record, threshold float64, pool memory.Alloca
 	// Get the schema from the input batch
 	schema := batch.Schema()
 
+	// Print debug info
+	fmt.Printf("FilterRecordBatch: batch has %d rows, threshold is %f\n", batch.NumRows(), threshold)
+
+	// Print the first few values to debug
+	valueArray, valueOk := batch.Column(1).(*array.Float64)
+	if !valueOk {
+		return nil, fmt.Errorf("failed to type assert value column")
+	}
+
+	fmt.Println("First 10 values in the batch:")
+	for i := 0; i < min(10, int(batch.NumRows())); i++ {
+		fmt.Printf("  Row %d: value = %f\n", i, valueArray.Value(i))
+	}
+
 	// Create builders for the filtered data with pre-allocated capacity
 	// This improves performance by reducing reallocations
 	estimatedCapacity := int(batch.NumRows() / 2) // Estimate half the rows will pass the filter
@@ -369,24 +373,29 @@ func FilterRecordBatch(batch arrow.Record, threshold float64, pool memory.Alloca
 
 	// Get typed arrays for each column
 	idArray, idOk := batch.Column(0).(*array.Int64)
-	valueArray, valueOk := batch.Column(1).(*array.Float64)
-	categoryArray, categoryOk := batch.Column(2).(*array.String)
+	if !idOk {
+		return nil, fmt.Errorf("failed to type assert id column")
+	}
 
-	// Skip if any type assertion failed
-	if !idOk || !valueOk || !categoryOk {
-		return nil, fmt.Errorf("failed to type assert columns")
+	categoryArray, categoryOk := batch.Column(2).(*array.String)
+	if !categoryOk {
+		return nil, fmt.Errorf("failed to type assert category column")
 	}
 
 	// Process the batch in a vectorized manner
 	// We iterate once through the batch and apply the filter condition
+	filteredCount := 0
 	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
 		// Apply the filter: keep rows where value > threshold
 		if valueArray.Value(rowIdx) > threshold {
 			idBuilder.Append(idArray.Value(rowIdx))
 			valueBuilder.Append(valueArray.Value(rowIdx))
 			categoryBuilder.Append(categoryArray.Value(rowIdx))
+			filteredCount++
 		}
 	}
+
+	fmt.Printf("FilterRecordBatch: filtered %d rows out of %d\n", filteredCount, batch.NumRows())
 
 	// Build the arrays for the filtered data
 	filteredIdArray := idBuilder.NewArray()
@@ -402,9 +411,21 @@ func FilterRecordBatch(batch arrow.Record, threshold float64, pool memory.Alloca
 	filteredBatch := array.NewRecord(
 		schema,
 		[]arrow.Array{filteredIdArray, filteredValueArray, filteredCategoryArray},
-		int64(idBuilder.Len()))
+		int64(filteredCount))
+
+	// Important: We need to retain the batch since we're returning it
+	// and the deferred releases above would otherwise release the arrays
+	filteredBatch.Retain()
 
 	return filteredBatch, nil
+}
+
+// Helper function for min
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // BatchProcessor implements the BatchProcessor interface for filtering operations
@@ -534,7 +555,7 @@ func (it *SampleBatchIterator) Release() {
 
 // FileBatchWriter implements the BatchWriter interface for writing to a file
 type FileBatchWriter struct {
-	writer *ipc.Writer
+	writer *ipc.FileWriter
 	file   io.Closer
 }
 
@@ -544,11 +565,14 @@ func NewFileBatchWriter(file io.WriteCloser, schema *arrow.Schema, pool memory.A
 		pool = memory.NewGoAllocator()
 	}
 
-	// Create an Arrow IPC writer
-	writer := ipc.NewWriter(file,
+	// Create an Arrow IPC file writer
+	writer, err := ipc.NewFileWriter(file,
 		ipc.WithSchema(schema),
 		ipc.WithAllocator(pool),
 		ipc.WithDictionaryDeltas(true))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Arrow IPC file writer: %w", err)
+	}
 
 	return &FileBatchWriter{
 		writer: writer,
