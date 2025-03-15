@@ -33,6 +33,7 @@ const (
 	configWorkflowID    = "workflow-id"
 	configTemporalHost  = "temporal-host"
 	configConfigFile    = "config"
+	configFlightServer  = "flight-server"
 
 	// Default values
 	defaultNamespace    = "default"
@@ -42,6 +43,7 @@ const (
 	defaultThreshold    = 500.0
 	defaultWorkerCount  = 5
 	defaultTemporalHost = "localhost:7233"
+	defaultFlightServer = "localhost:8080"
 )
 
 func main() {
@@ -78,20 +80,21 @@ func main() {
 
 	// Start worker if requested
 	if viper.GetBool(configStartWorker) {
-		startArrowWorker(ctx, c, viper.GetString(configTaskQueue), viper.GetInt(configWorkerCount))
+		startFlightWorker(ctx, c, viper.GetString(configTaskQueue), viper.GetInt(configWorkerCount))
 	}
 
 	// Start workflow if requested
 	if viper.GetBool(configStartWorkflow) {
 		id := viper.GetString(configWorkflowID)
 		if id == "" {
-			id = fmt.Sprintf("arrow-pipeline-%v", time.Now().UnixNano())
+			id = fmt.Sprintf("arrow-flight-pipeline-%v", time.Now().UnixNano())
 		}
-		startArrowWorkflow(ctx, c, id,
+		startFlightWorkflow(ctx, c, id,
 			viper.GetString(configTaskQueue),
 			viper.GetInt(configBatchSize),
 			viper.GetInt(configNumBatches),
-			viper.GetFloat64(configThreshold))
+			viper.GetFloat64(configThreshold),
+			viper.GetString(configFlightServer))
 	}
 
 	// If neither worker nor workflow was started, print usage
@@ -119,6 +122,7 @@ func initConfig() error {
 	pflag.Bool(configStartWorkflow, false, "Start a workflow")
 	pflag.String(configWorkflowID, "", "Workflow ID (defaults to a generated ID)")
 	pflag.String(configTemporalHost, defaultTemporalHost, "Temporal server host:port")
+	pflag.String(configFlightServer, defaultFlightServer, "Arrow Flight server address")
 	pflag.Parse()
 
 	// Bind command line flags to viper
@@ -177,9 +181,9 @@ func getGrpcOptions() []grpc.DialOption {
 	}
 }
 
-// startArrowWorker starts a Temporal worker for the Arrow pipeline
-func startArrowWorker(ctx context.Context, c client.Client, taskQueue string, workerCount int) {
-	log.Printf("Starting Arrow pipeline worker on task queue: %s", taskQueue)
+// startFlightWorker starts a Temporal worker for the Arrow Flight pipeline
+func startFlightWorker(ctx context.Context, c client.Client, taskQueue string, workerCount int) {
+	log.Printf("Starting Arrow Flight pipeline worker on task queue: %s", taskQueue)
 
 	// Create a worker with optimized options for data processing
 	w := worker.New(c, taskQueue, worker.Options{
@@ -191,7 +195,7 @@ func startArrowWorker(ctx context.Context, c client.Client, taskQueue string, wo
 	})
 
 	// Register workflow and activities
-	workflow.RegisterStreamingWorkflow(w)
+	workflow.RegisterFlightWorkflow(w)
 
 	// Start the worker (non-blocking)
 	err := w.Start()
@@ -210,15 +214,16 @@ func startArrowWorker(ctx context.Context, c client.Client, taskQueue string, wo
 	log.Println("Worker started successfully")
 }
 
-// startArrowWorkflow starts the Arrow streaming workflow
-func startArrowWorkflow(ctx context.Context, c client.Client, workflowID, taskQueue string, batchSize, numBatches int, threshold float64) {
-	log.Printf("Starting Arrow streaming workflow (ID: %s)", workflowID)
+// startFlightWorkflow starts the Arrow Flight workflow
+func startFlightWorkflow(ctx context.Context, c client.Client, workflowID, taskQueue string, batchSize, numBatches int, threshold float64, flightServer string) {
+	log.Printf("Starting Arrow Flight workflow (ID: %s)", workflowID)
 
 	// Create workflow parameters
-	params := workflow.StreamingWorkflowParams{
-		BatchSize:  batchSize,
-		NumBatches: numBatches,
-		Threshold:  threshold,
+	params := workflow.FlightWorkflowParams{
+		BatchSize:        batchSize,
+		NumBatches:       numBatches,
+		Threshold:        threshold,
+		FlightServerAddr: flightServer,
 	}
 
 	// Workflow options optimized for large data processing
@@ -231,14 +236,15 @@ func startArrowWorkflow(ctx context.Context, c client.Client, workflowID, taskQu
 		WorkflowTaskTimeout: time.Minute,
 		// Enable memo for workflow metadata
 		Memo: map[string]interface{}{
-			"batchSize":  batchSize,
-			"numBatches": numBatches,
-			"threshold":  threshold,
+			"batchSize":        batchSize,
+			"numBatches":       numBatches,
+			"threshold":        threshold,
+			"flightServerAddr": flightServer,
 		},
 	}
 
 	// Start the workflow with the params struct
-	we, err := c.ExecuteWorkflow(ctx, options, workflow.StreamingWorkflow, params)
+	we, err := c.ExecuteWorkflow(ctx, options, workflow.FlightWorkflow, params)
 	if err != nil {
 		log.Fatalf("Failed to start workflow: %v", err)
 	}
@@ -251,6 +257,6 @@ func startArrowWorkflow(ctx context.Context, c client.Client, workflowID, taskQu
 	if err != nil {
 		log.Printf("Workflow execution failed: %v", err)
 	} else {
-		log.Printf("Workflow completed successfully. Processed %d rows.", result)
+		log.Printf("Workflow execution completed with result: %v", result)
 	}
 }
