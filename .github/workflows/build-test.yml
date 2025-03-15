@@ -21,21 +21,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          cd temporal
           go mod download
 
       - name: Build
         run: |
-          cd temporal
           go build -v ./...
 
       - name: Test
         run: |
-          cd temporal
           go test -v ./...
 
       - name: Lint
         run: |
-          cd temporal
           go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
           golangci-lint run ./...
