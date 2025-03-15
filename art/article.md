@@ -48,14 +48,6 @@ Individually, these technologies are powerful. Together, they form a workflow-dr
 
 Temporal is a workflow orchestration engine that solves the hardest parts of distributed systems—durability, visibility, reliability, and scalability.
 
-Durability – Workflows survive crashes, network failures, and even datacenter outages.
-
-Visibility – See exactly what's happening in your workflows in real time.
-
-Reliability – Automatic retries, timeouts, and error handling built-in.
-
-Scalability – Scale from one workflow to millions without changing your code.
-
 Think of Temporal as an operating system for your distributed applications. You write code that describes what should happen, and Temporal ensures it does—even when things go wrong. No more brittle state machines. No more manual retries. No more losing track of execution when services fail.
 
 And you’re not locked into a single language. Temporal supports multiple languages, including Go, Java, TypeScript, and Python, so teams can build workflows using the stack that fits them best.
