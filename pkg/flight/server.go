@@ -168,8 +168,9 @@ func (s *FlightServer) DoGet(request *flight.Ticket, stream flight.FlightService
 	// Create a writer for the stream
 	writer := flight.NewRecordWriter(stream, ipc.WithSchema(batch.Schema()))
 
-	// Write the batch to the stream
+	// Write the batch to the stream and handle errors
 	if err := writer.Write(batch); err != nil {
+		// Make sure to close the writer even if writing fails
 		writer.Close()
 		return fmt.Errorf("failed to write batch to stream: %w", err)
 	}
@@ -202,26 +203,23 @@ func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
 	}
 	defer reader.Release()
 
-	// Read all records (should be just one in our case)
-	var batch arrow.Record
-	for reader.Next() {
-		if batch != nil {
-			batch.Release()
+	// Read the first record
+	if !reader.Next() {
+		if err := reader.Err(); err != nil {
+			return fmt.Errorf("error reading record: %w", err)
 		}
-		batch = reader.Record()
-		batch.Retain() // Retain the batch so it's not released when the reader is released
-	}
-
-	if err := reader.Err(); err != nil {
-		if batch != nil {
-			batch.Release()
-		}
-		return fmt.Errorf("error reading record: %w", err)
-	}
-
-	if batch == nil {
 		return fmt.Errorf("no record received")
 	}
+
+	// Get the record and retain it
+	batch := reader.Record()
+	batch.Retain() // Retain the batch so it's not released when the reader is released
+	defer func() {
+		// If we exit with an error, make sure to release the batch
+		if batch != nil {
+			batch.Release()
+		}
+	}()
 
 	// Generate a unique ID for the batch
 	batchID := generateBatchID()
@@ -231,6 +229,9 @@ func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
 	s.batches[batchID] = batch
 	s.expirations[batchID] = time.Now().Add(s.ttl)
 	s.batchesMu.Unlock()
+
+	// We've successfully stored the batch, so don't release it on exit
+	batch = nil
 
 	// Send the batch ID back to the client
 	err = stream.Send(&flight.PutResult{
