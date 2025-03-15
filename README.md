@@ -31,12 +31,6 @@ Enables direct memory sharing between activities, minimizing serialization overh
 
 Orchestrates the data processing pipeline with Temporal, managing the flow of data between activities.
 
-### Data Processing Activities
-
-- **Generate Batch Activity**: Creates Arrow RecordBatches with sample data
-- **Process Batch Activity**: Filters and transforms the data using vectorized operations
-- **Store Batch Activity**: Stores the processed data (simulated in this example)
-
 ### Batch Processors
 
 Implements vectorized operations on Arrow data for efficient processing.
