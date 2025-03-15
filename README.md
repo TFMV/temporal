@@ -1,4 +1,4 @@
-# High-Performance Data Processing Pipeline with Temporal and Apache Arrow
+# Data Processing Pipeline with Temporal and Apache Arrow
 
 A high-performance data processing pipeline using Temporal for workflow orchestration and Apache Arrow for efficient data handling.
 

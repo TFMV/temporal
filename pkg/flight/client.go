@@ -74,6 +74,10 @@ func (c *FlightClient) Close() error {
 
 // PutBatch sends a batch to the Flight server and returns the batch ID
 func (c *FlightClient) PutBatch(ctx context.Context, batch arrow.Record) (string, error) {
+	// Add a timeout to the context to prevent hanging
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	// Create a Flight descriptor
 	descriptor := &flight.FlightDescriptor{
 		Type: flight.DescriptorCMD,
@@ -86,7 +90,7 @@ func (c *FlightClient) PutBatch(ctx context.Context, batch arrow.Record) (string
 		return "", fmt.Errorf("failed to start DoPut stream: %w", err)
 	}
 
-	// Send the descriptor to the stream
+	// First, send the descriptor
 	if err := stream.Send(&flight.FlightData{
 		FlightDescriptor: descriptor,
 	}); err != nil {
@@ -95,10 +99,10 @@ func (c *FlightClient) PutBatch(ctx context.Context, batch arrow.Record) (string
 
 	// Create a writer for the stream
 	writer := flight.NewRecordWriter(stream, ipc.WithSchema(batch.Schema()))
-	defer writer.Close()
 
 	// Write the batch to the stream
 	if err := writer.Write(batch); err != nil {
+		writer.Close()
 		return "", fmt.Errorf("failed to write batch to stream: %w", err)
 	}
 
@@ -119,6 +123,10 @@ func (c *FlightClient) PutBatch(ctx context.Context, batch arrow.Record) (string
 
 // GetBatch retrieves a batch from the Flight server by ID
 func (c *FlightClient) GetBatch(ctx context.Context, batchID string) (arrow.Record, error) {
+	// Add a timeout to the context to prevent hanging
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	// Create a Flight ticket
 	ticket := &flight.Ticket{
 		Ticket: []byte(batchID),
@@ -147,13 +155,17 @@ func (c *FlightClient) GetBatch(ctx context.Context, batchID string) (arrow.Reco
 
 	// Get the batch and retain it
 	batch := reader.Record()
-	batch.Retain()
+	batch.Retain() // Important: Retain the batch so it's not released when the reader is released
 
 	return batch, nil
 }
 
 // ListBatches lists all batches in the Flight server
 func (c *FlightClient) ListBatches(ctx context.Context) ([]string, error) {
+	// Add a timeout to the context to prevent hanging
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	// Create a Flight criteria
 	criteria := &flight.Criteria{}
 

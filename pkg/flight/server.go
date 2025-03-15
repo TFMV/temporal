@@ -26,6 +26,7 @@ type FlightServer struct {
 	allocator   memory.Allocator
 	expirations map[string]time.Time
 	ttl         time.Duration
+	cancel      context.CancelFunc // Cancel function for cleanup goroutine
 }
 
 // FlightServerConfig contains configuration options for the Flight server
@@ -50,26 +51,28 @@ func NewFlightServer(config FlightServerConfig) (*FlightServer, error) {
 		config.TTL = 1 * time.Hour
 	}
 
-	listener, err := net.Listen("tcp", config.Addr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen on %s: %w", config.Addr, err)
-	}
-
+	// Create the server without starting the listener yet
 	server := &FlightServer{
 		addr:        config.Addr,
-		listener:    listener,
 		batches:     make(map[string]arrow.Record),
 		expirations: make(map[string]time.Time),
 		allocator:   config.Allocator,
 		ttl:         config.TTL,
 	}
 
-	// Create a gRPC server
-	server.server = grpc.NewServer()
+	// Create a gRPC server with appropriate options
+	server.server = grpc.NewServer(
+		grpc.MaxRecvMsgSize(64*1024*1024), // 64MB max message size
+		grpc.MaxSendMsgSize(64*1024*1024), // 64MB max message size
+	)
+
+	// Register the Flight service
 	flight.RegisterFlightServiceServer(server.server, server)
 
 	// Start a goroutine to clean up expired batches
-	go server.cleanupExpiredBatches()
+	ctx, cancel := context.WithCancel(context.Background())
+	server.cancel = cancel
+	go server.cleanupExpiredBatches(ctx)
 
 	return server, nil
 }
@@ -77,12 +80,49 @@ func NewFlightServer(config FlightServerConfig) (*FlightServer, error) {
 // Start starts the Flight server
 func (s *FlightServer) Start() error {
 	fmt.Printf("Starting Arrow Flight server on %s\n", s.addr)
-	return s.server.Serve(s.listener)
+
+	// Create a listener
+	listener, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", s.addr, err)
+	}
+
+	// Store the listener
+	s.listener = listener
+
+	// Serve in the current goroutine
+	return s.server.Serve(listener)
 }
 
 // Stop stops the Flight server
 func (s *FlightServer) Stop() {
-	s.server.GracefulStop()
+	fmt.Println("Stopping Arrow Flight server")
+
+	// Cancel the cleanup goroutine
+	if s.cancel != nil {
+		s.cancel()
+	}
+
+	// Clear all batches to release memory
+	s.batchesMu.Lock()
+	for id, batch := range s.batches {
+		batch.Release()
+		delete(s.batches, id)
+		delete(s.expirations, id)
+	}
+	s.batchesMu.Unlock()
+
+	// Stop the gRPC server gracefully
+	if s.server != nil {
+		s.server.GracefulStop()
+	}
+
+	// Close the listener if it exists
+	if s.listener != nil {
+		s.listener.Close()
+	}
+
+	fmt.Println("Arrow Flight server stopped")
 }
 
 // GetFlightInfo implements the Flight GetFlightInfo method
@@ -127,24 +167,32 @@ func (s *FlightServer) DoGet(request *flight.Ticket, stream flight.FlightService
 
 	// Create a writer for the stream
 	writer := flight.NewRecordWriter(stream, ipc.WithSchema(batch.Schema()))
-	defer writer.Close()
 
 	// Write the batch to the stream
-	return writer.Write(batch)
+	if err := writer.Write(batch); err != nil {
+		writer.Close()
+		return fmt.Errorf("failed to write batch to stream: %w", err)
+	}
+
+	// Close the writer to signal the end of the stream
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	return nil
 }
 
 // DoPut implements the Flight DoPut method
 func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
-	// Get the first message which should contain the schema
-	msg, err := stream.Recv()
+	// Get the first message which should contain the descriptor
+	firstMsg, err := stream.Recv()
 	if err != nil {
-		return fmt.Errorf("failed to receive schema: %w", err)
+		return fmt.Errorf("failed to receive descriptor: %w", err)
 	}
 
-	// TODO: Deserialize the schema - we don't use this directly but it's part of the protocol
-	_, err = flight.DeserializeSchema(msg.DataHeader, s.allocator)
-	if err != nil {
-		return fmt.Errorf("failed to deserialize schema: %w", err)
+	// Check if we have a descriptor
+	if firstMsg.FlightDescriptor == nil {
+		return fmt.Errorf("missing flight descriptor in first message")
 	}
 
 	// Create a reader for the stream
@@ -165,6 +213,9 @@ func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
 	}
 
 	if err := reader.Err(); err != nil {
+		if batch != nil {
+			batch.Release()
+		}
 		return fmt.Errorf("error reading record: %w", err)
 	}
 
@@ -182,9 +233,22 @@ func (s *FlightServer) DoPut(stream flight.FlightService_DoPutServer) error {
 	s.batchesMu.Unlock()
 
 	// Send the batch ID back to the client
-	return stream.Send(&flight.PutResult{
+	err = stream.Send(&flight.PutResult{
 		AppMetadata: []byte(batchID),
 	})
+	if err != nil {
+		// If we fail to send the result, remove the batch from storage
+		s.batchesMu.Lock()
+		if storedBatch, ok := s.batches[batchID]; ok {
+			storedBatch.Release()
+			delete(s.batches, batchID)
+			delete(s.expirations, batchID)
+		}
+		s.batchesMu.Unlock()
+		return fmt.Errorf("failed to send result: %w", err)
+	}
+
+	return nil
 }
 
 // ListFlights implements the Flight ListFlights method
@@ -222,36 +286,47 @@ func (s *FlightServer) ListFlights(request *flight.Criteria, stream flight.Fligh
 }
 
 // cleanupExpiredBatches periodically removes expired batches
-func (s *FlightServer) cleanupExpiredBatches() {
+func (s *FlightServer) cleanupExpiredBatches(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		now := time.Now()
-		var expiredIDs []string
+	for {
+		select {
+		case <-ticker.C:
+			s.performCleanup()
+		case <-ctx.Done():
+			fmt.Println("Stopping batch cleanup routine")
+			return
+		}
+	}
+}
 
-		// Find expired batches
-		s.batchesMu.RLock()
-		for batchID, expiration := range s.expirations {
-			if now.After(expiration) {
-				expiredIDs = append(expiredIDs, batchID)
+// performCleanup handles the actual cleanup of expired batches
+func (s *FlightServer) performCleanup() {
+	now := time.Now()
+	var expiredIDs []string
+
+	// Find expired batches
+	s.batchesMu.RLock()
+	for batchID, expiration := range s.expirations {
+		if now.After(expiration) {
+			expiredIDs = append(expiredIDs, batchID)
+		}
+	}
+	s.batchesMu.RUnlock()
+
+	// Remove expired batches
+	if len(expiredIDs) > 0 {
+		s.batchesMu.Lock()
+		for _, batchID := range expiredIDs {
+			if batch, ok := s.batches[batchID]; ok {
+				batch.Release()
+				delete(s.batches, batchID)
+				delete(s.expirations, batchID)
 			}
 		}
-		s.batchesMu.RUnlock()
-
-		// Remove expired batches
-		if len(expiredIDs) > 0 {
-			s.batchesMu.Lock()
-			for _, batchID := range expiredIDs {
-				if batch, ok := s.batches[batchID]; ok {
-					batch.Release()
-					delete(s.batches, batchID)
-					delete(s.expirations, batchID)
-				}
-			}
-			s.batchesMu.Unlock()
-			fmt.Printf("Cleaned up %d expired batches\n", len(expiredIDs))
-		}
+		s.batchesMu.Unlock()
+		fmt.Printf("Cleaned up %d expired batches\n", len(expiredIDs))
 	}
 }
 

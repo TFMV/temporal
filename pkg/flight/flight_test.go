@@ -23,25 +23,32 @@ func startTestServer(t *testing.T) (*FlightServer, string) {
 	addr := listener.Addr().String()
 	listener.Close() // Close the listener so the server can use the port
 
-	// Create a server
+	// Create a server with a shorter TTL for testing
 	server, err := NewFlightServer(FlightServerConfig{
 		Addr:      addr,
 		Allocator: memory.NewGoAllocator(),
+		TTL:       5 * time.Minute, // Shorter TTL for testing
 	})
 	require.NoError(t, err, "Failed to create Flight server")
 
 	// Start the server in a goroutine
+	serverErrCh := make(chan error, 1)
 	go func() {
 		if err := server.Start(); err != nil {
-			// Only log if it's not a "server closed" error
+			// Only send error if it's not a "server closed" error
 			if err != grpc.ErrServerStopped {
-				t.Logf("Server error: %v", err)
+				serverErrCh <- err
 			}
 		}
 	}()
 
-	// Wait for the server to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the server to start or error
+	select {
+	case err := <-serverErrCh:
+		t.Fatalf("Server failed to start: %v", err)
+	case <-time.After(500 * time.Millisecond):
+		// Server started successfully
+	}
 
 	return server, addr
 }
@@ -108,13 +115,18 @@ func TestFlightServerClient(t *testing.T) {
 	batch := createTestBatch(t, memory.NewGoAllocator())
 	defer batch.Release()
 
-	// Test PutBatch
-	ctx := context.Background()
+	// Test PutBatch with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	batchID, err := client.PutBatch(ctx, batch)
 	require.NoError(t, err, "Failed to put batch")
 	require.NotEmpty(t, batchID, "Batch ID should not be empty")
 
-	// Test GetBatch
+	// Test GetBatch with timeout
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	retrievedBatch, err := client.GetBatch(ctx, batchID)
 	require.NoError(t, err, "Failed to get batch")
 	defer retrievedBatch.Release()
@@ -123,7 +135,10 @@ func TestFlightServerClient(t *testing.T) {
 	assert.Equal(t, batch.NumRows(), retrievedBatch.NumRows(), "Number of rows should match")
 	assert.Equal(t, batch.NumCols(), retrievedBatch.NumCols(), "Number of columns should match")
 
-	// Test ListBatches
+	// Test ListBatches with timeout
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	batchIDs, err := client.ListBatches(ctx)
 	require.NoError(t, err, "Failed to list batches")
 	assert.Contains(t, batchIDs, batchID, "Batch ID should be in the list")
@@ -131,7 +146,6 @@ func TestFlightServerClient(t *testing.T) {
 
 // TestFlightServerClientLargeBatch tests the Flight server and client with a large batch
 func TestFlightServerClientLargeBatch(t *testing.T) {
-	// Skip this test in CI environments or when running short tests
 	if testing.Short() {
 		t.Skip("Skipping large batch test in short mode")
 	}
@@ -192,8 +206,10 @@ func TestFlightServerClientLargeBatch(t *testing.T) {
 	batch := array.NewRecord(schema, columns, int64(numRows))
 	defer batch.Release()
 
-	// Test PutBatch
-	ctx := context.Background()
+	// Test PutBatch with a longer timeout for large batch
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	start := time.Now()
 	batchID, err := client.PutBatch(ctx, batch)
 	elapsed := time.Since(start)
@@ -202,7 +218,10 @@ func TestFlightServerClientLargeBatch(t *testing.T) {
 
 	t.Logf("Put large batch (%d rows) in %s", numRows, elapsed)
 
-	// Test GetBatch
+	// Test GetBatch with a longer timeout for large batch
+	ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	start = time.Now()
 	retrievedBatch, err := client.GetBatch(ctx, batchID)
 	elapsed = time.Since(start)
