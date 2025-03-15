@@ -3,7 +3,6 @@ package flight
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/apache/arrow/go/v18/arrow"
 	"github.com/apache/arrow/go/v18/arrow/flight"
@@ -41,20 +40,16 @@ func NewFlightClient(config FlightClientConfig) (*FlightClient, error) {
 	// Set up gRPC options
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-		grpc.WithTimeout(5 * time.Second),
+		// Set maximum message sizes for large batches
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(64*1024*1024), // 64MB
+			grpc.MaxCallSendMsgSize(64*1024*1024), // 64MB
+		),
 	}
 
-	// Connect to the server
-	conn, err := grpc.Dial(config.Addr, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Flight server at %s: %w", config.Addr, err)
-	}
-
-	// Create a Flight client
+	// Create a Flight client with the gRPC options
 	client, err := flight.NewClientWithMiddleware(config.Addr, nil, nil, opts...)
 	if err != nil {
-		conn.Close()
 		return nil, fmt.Errorf("failed to create Flight client: %w", err)
 	}
 
@@ -62,14 +57,14 @@ func NewFlightClient(config FlightClientConfig) (*FlightClient, error) {
 		client:    client,
 		addr:      config.Addr,
 		allocator: config.Allocator,
-		conn:      conn,
+		conn:      nil, // We don't need to store the connection separately
 	}, nil
 }
 
 // Close closes the Flight client
 func (c *FlightClient) Close() error {
 	c.client.Close()
-	return c.conn.Close()
+	return nil
 }
 
 // PutBatch sends a batch to the Flight server and returns the batch ID
