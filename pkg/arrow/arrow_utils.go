@@ -770,14 +770,6 @@ func (p *FilterBatchProcessorWithOptions) Release() {
 	// Nothing to release in this implementation
 }
 
-// Helper function for min
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // BatchProcessor implements the BatchProcessor interface for filtering operations
 type FilterBatchProcessor struct {
 	threshold float64
