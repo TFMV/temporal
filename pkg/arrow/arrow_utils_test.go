@@ -93,18 +93,19 @@ func TestFilterRecordBatch(t *testing.T) {
 
 	// Define test cases with different thresholds
 	testCases := []struct {
-		name      string
-		threshold float64
+		name         string
+		threshold    float64
+		expectedRows int64 // Expected number of rows after filtering
 	}{
-		{"NoFiltering", -1.0},    // All rows should pass (all values are >= 0)
-		{"HalfFiltering", 75.0},  // Rows with index >= 50 pass (value >= 75.0)
-		{"MostFiltering", 140.0}, // Only rows with index >= 94 pass (value >= 141.0)
-		{"AllFiltering", 1000.0}, // No rows pass (max value is 148.5)
+		{"NoFiltering", -1.0, 100},  // All rows should pass (all values are >= 0)
+		{"HalfFiltering", 75.0, 49}, // Rows with index >= 50 pass (value >= 75.0)
+		{"MostFiltering", 140.0, 6}, // Only rows with index >= 94 pass (value >= 141.0)
+		{"AllFiltering", 1000.0, 0}, // No rows pass (max value is 148.5)
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Filter the batch
+			// Filter the batch using the deprecated function (for backward compatibility testing)
 			filteredBatch, err := FilterRecordBatch(batch, tc.threshold, pool)
 			require.NoError(t, err)
 			defer filteredBatch.Release()
@@ -113,45 +114,169 @@ func TestFilterRecordBatch(t *testing.T) {
 			filteredRows := filteredBatch.NumRows()
 			t.Logf("Filtered batch has %d rows with threshold %f", filteredRows, tc.threshold)
 
+			// Verify we have the expected number of rows
+			require.Equal(t, tc.expectedRows, filteredRows,
+				"Filtered batch should have %d rows, but has %d", tc.expectedRows, filteredRows)
+
 			// If we have rows, verify they all pass the filter
 			if filteredRows > 0 {
 				valueArray, ok := filteredBatch.Column(1).(*array.Float64)
 				require.True(t, ok)
 
-				// Check that all values in the filtered batch are greater than the threshold
-				for i := 0; i < valueArray.Len(); i++ {
+				for i := 0; i < int(filteredRows); i++ {
 					value := valueArray.Value(i)
-					assert.Greater(t, value, tc.threshold,
-						"Row %d has value %f which is not > %f", i, value, tc.threshold)
+					require.True(t, value > tc.threshold,
+						"Row %d has value %f, which is not > %f", i, value, tc.threshold)
 				}
+			}
 
-				// For the first test case (NoFiltering), verify we kept all rows
-				if tc.name == "NoFiltering" {
-					assert.Equal(t, batch.NumRows(), filteredRows,
-						"NoFiltering should keep all rows")
-				}
+			// Also test with the new function to ensure compatibility
+			options := FilterOptions{
+				ColumnIndex: 1,
+				Condition:   GreaterThan,
+				Threshold:   tc.threshold,
+				Debug:       false,
+			}
 
-				// For AllFiltering, we should have 0 rows
-				if tc.name == "AllFiltering" {
-					assert.Equal(t, int64(0), filteredRows,
-						"AllFiltering should filter out all rows")
-				}
-			} else {
-				// If we have no rows, the threshold should be high enough to filter everything
-				// Get the max value from the original batch
-				valueArray, ok := batch.Column(1).(*array.Float64)
-				require.True(t, ok)
+			newFilteredBatch, err := FilterRecordBatchWithOptions(batch, options, pool)
+			require.NoError(t, err)
+			defer newFilteredBatch.Release()
 
-				maxValue := float64(-1)
-				for i := 0; i < valueArray.Len(); i++ {
-					if valueArray.Value(i) > maxValue {
-						maxValue = valueArray.Value(i)
+			// Verify that both functions produce the same result
+			require.Equal(t, filteredRows, newFilteredBatch.NumRows(),
+				"New and old filter functions should produce the same number of rows")
+		})
+	}
+}
+
+func TestFilterRecordBatchWithOptions(t *testing.T) {
+	// Create a memory allocator
+	pool := memory.NewGoAllocator()
+
+	// Create a sample record batch with known values
+	batch := CreateSampleRecordBatch(100, pool)
+	defer batch.Release()
+
+	// Define test cases with different conditions
+	testCases := []struct {
+		name       string
+		columnIdx  int
+		condition  FilterCondition
+		threshold  float64
+		expectedFn func(float64) bool // Function to determine if a value should pass the filter
+	}{
+		{
+			name:       "GreaterThan",
+			columnIdx:  1,
+			condition:  GreaterThan,
+			threshold:  75.0,
+			expectedFn: func(v float64) bool { return v > 75.0 },
+		},
+		{
+			name:       "LessThan",
+			columnIdx:  1,
+			condition:  LessThan,
+			threshold:  75.0,
+			expectedFn: func(v float64) bool { return v < 75.0 },
+		},
+		{
+			name:       "EqualTo",
+			columnIdx:  1,
+			condition:  EqualTo,
+			threshold:  75.0, // Value at index 50 is 75.0
+			expectedFn: func(v float64) bool { return v == 75.0 },
+		},
+		{
+			name:       "NotEqualTo",
+			columnIdx:  1,
+			condition:  NotEqualTo,
+			threshold:  75.0,
+			expectedFn: func(v float64) bool { return v != 75.0 },
+		},
+		{
+			name:       "GreaterThanOrEqual",
+			columnIdx:  1,
+			condition:  GreaterThanOrEqual,
+			threshold:  75.0,
+			expectedFn: func(v float64) bool { return v >= 75.0 },
+		},
+		{
+			name:       "LessThanOrEqual",
+			columnIdx:  1,
+			condition:  LessThanOrEqual,
+			threshold:  75.0,
+			expectedFn: func(v float64) bool { return v <= 75.0 },
+		},
+		{
+			name:       "FilterOnIdColumn",
+			columnIdx:  0, // Filter on ID column
+			condition:  GreaterThan,
+			threshold:  50.0,
+			expectedFn: func(v float64) bool { return v > 50.0 },
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create filter options
+			options := FilterOptions{
+				ColumnIndex: tc.columnIdx,
+				Condition:   tc.condition,
+				Threshold:   tc.threshold,
+				Debug:       false,
+			}
+
+			// Filter the batch
+			filteredBatch, err := FilterRecordBatchWithOptions(batch, options, pool)
+			require.NoError(t, err)
+			defer filteredBatch.Release()
+
+			// Get the number of rows in the filtered batch
+			filteredRows := filteredBatch.NumRows()
+			t.Logf("Filtered batch has %d rows with condition %d and threshold %f",
+				filteredRows, tc.condition, tc.threshold)
+
+			// If we have rows, verify they all pass the filter
+			if filteredRows > 0 {
+				// Get the column we filtered on
+				var values []float64
+
+				switch col := batch.Column(tc.columnIdx).(type) {
+				case *array.Int64:
+					// Count how many values in the original batch should pass the filter
+					for i := 0; i < int(batch.NumRows()); i++ {
+						if tc.expectedFn(float64(col.Value(i))) {
+							values = append(values, float64(col.Value(i)))
+						}
+					}
+				case *array.Float64:
+					// Count how many values in the original batch should pass the filter
+					for i := 0; i < int(batch.NumRows()); i++ {
+						if tc.expectedFn(col.Value(i)) {
+							values = append(values, col.Value(i))
+						}
 					}
 				}
 
-				assert.Greater(t, tc.threshold, maxValue,
-					"Threshold %f should be greater than max value %f to filter all rows",
-					tc.threshold, maxValue)
+				// Verify the filtered batch has the expected number of rows
+				require.Equal(t, len(values), int(filteredRows),
+					"Filtered batch should have %d rows, but has %d", len(values), filteredRows)
+
+				// Verify the values in the filtered batch
+				switch col := filteredBatch.Column(tc.columnIdx).(type) {
+				case *array.Int64:
+					for i := 0; i < int(filteredRows); i++ {
+						value := float64(col.Value(i))
+						require.True(t, tc.expectedFn(value),
+							"Row %d has value %f, which does not satisfy the filter condition", i, value)
+					}
+				case *array.Float64:
+					for i := 0; i < int(filteredRows); i++ {
+						value := col.Value(i)
+						require.True(t, tc.expectedFn(value),
+							"Row %d has value %f, which does not satisfy the filter condition", i, value)
+					}
+				}
 			}
 		})
 	}
