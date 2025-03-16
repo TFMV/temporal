@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"strconv"
 
 	"github.com/apache/arrow/go/v18/arrow"
 	"github.com/apache/arrow/go/v18/arrow/array"
@@ -332,93 +333,441 @@ func FilterTable(table arrow.Table, threshold float64, pool memory.Allocator) (a
 	return filteredTable, nil
 }
 
-// FilterRecordBatch performs a filtering operation on a RecordBatch
-// This is optimized for streaming operations
-func FilterRecordBatch(batch arrow.Record, threshold float64, pool memory.Allocator) (arrow.Record, error) {
+// FilterCondition defines the type of filter condition to apply
+type FilterCondition int
+
+const (
+	// GreaterThan filters values greater than the threshold
+	GreaterThan FilterCondition = iota
+	// LessThan filters values less than the threshold
+	LessThan
+	// EqualTo filters values equal to the threshold
+	EqualTo
+	// NotEqualTo filters values not equal to the threshold
+	NotEqualTo
+	// GreaterThanOrEqual filters values greater than or equal to the threshold
+	GreaterThanOrEqual
+	// LessThanOrEqual filters values less than or equal to the threshold
+	LessThanOrEqual
+)
+
+// FilterOptions contains options for filtering a record batch
+type FilterOptions struct {
+	// ColumnIndex is the index of the column to filter on
+	ColumnIndex int
+	// Condition is the type of filter condition to apply
+	Condition FilterCondition
+	// Threshold is the value to compare against
+	Threshold float64
+	// Debug enables debug output
+	Debug bool
+}
+
+// FilterRecordBatchWithOptions performs a filtering operation on a RecordBatch with configurable options
+// It supports filtering on any column that contains numeric values with various comparison conditions
+func FilterRecordBatchWithOptions(batch arrow.Record, options FilterOptions, pool memory.Allocator) (arrow.Record, error) {
 	if pool == nil {
 		pool = memory.NewGoAllocator()
+	}
+
+	// Validate inputs
+	if batch.NumRows() == 0 {
+		return batch, nil // Nothing to filter
+	}
+
+	if options.ColumnIndex < 0 || options.ColumnIndex >= int(batch.NumCols()) {
+		return nil, fmt.Errorf("column index %d out of range (0-%d)", options.ColumnIndex, batch.NumCols()-1)
 	}
 
 	// Get the schema from the input batch
 	schema := batch.Schema()
 
-	// Print debug info
-	fmt.Printf("FilterRecordBatch: batch has %d rows, threshold is %f\n", batch.NumRows(), threshold)
-
-	// Print the first few values to debug
-	valueArray, valueOk := batch.Column(1).(*array.Float64)
-	if !valueOk {
-		return nil, fmt.Errorf("failed to type assert value column")
+	// Debug output if enabled
+	if options.Debug {
+		fmt.Printf("FilterRecordBatchWithOptions: batch has %d rows, filtering column %d with condition %d and threshold %f\n",
+			batch.NumRows(), options.ColumnIndex, options.Condition, options.Threshold)
 	}
 
-	fmt.Println("First 10 values in the batch:")
-	for i := 0; i < min(10, int(batch.NumRows())); i++ {
-		fmt.Printf("  Row %d: value = %f\n", i, valueArray.Value(i))
-	}
-
-	// Create builders for the filtered data with pre-allocated capacity
-	// This improves performance by reducing reallocations
-	estimatedCapacity := int(batch.NumRows() / 2) // Estimate half the rows will pass the filter
-
-	idBuilder := array.NewInt64Builder(pool)
-	defer idBuilder.Release()
-	idBuilder.Reserve(estimatedCapacity)
-
-	valueBuilder := array.NewFloat64Builder(pool)
-	defer valueBuilder.Release()
-	valueBuilder.Reserve(estimatedCapacity)
-
-	categoryBuilder := array.NewStringBuilder(pool)
-	defer categoryBuilder.Release()
-	categoryBuilder.Reserve(estimatedCapacity * 10) // Estimate for string length
-
-	// Get typed arrays for each column
-	idArray, idOk := batch.Column(0).(*array.Int64)
-	if !idOk {
-		return nil, fmt.Errorf("failed to type assert id column")
-	}
-
-	categoryArray, categoryOk := batch.Column(2).(*array.String)
-	if !categoryOk {
-		return nil, fmt.Errorf("failed to type assert category column")
-	}
-
-	// Process the batch in a vectorized manner
-	// We iterate once through the batch and apply the filter condition
-	filteredCount := 0
-	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
-		// Apply the filter: keep rows where value > threshold
-		if valueArray.Value(rowIdx) > threshold {
-			idBuilder.Append(idArray.Value(rowIdx))
-			valueBuilder.Append(valueArray.Value(rowIdx))
-			categoryBuilder.Append(categoryArray.Value(rowIdx))
-			filteredCount++
+	// Create builders for each column
+	builders := make([]array.Builder, batch.NumCols())
+	arrays := make([]arrow.Array, batch.NumCols())
+	defer func() {
+		for _, builder := range builders {
+			if builder != nil {
+				builder.Release()
+			}
 		}
+	}()
+
+	// Initialize builders for each column
+	for i := 0; i < int(batch.NumCols()); i++ {
+		field := schema.Field(i)
+		builders[i] = array.NewBuilder(pool, field.Type)
+
+		// Pre-allocate capacity (estimate half the rows will pass the filter)
+		estimatedCapacity := int(batch.NumRows() / 2)
+		builders[i].Reserve(estimatedCapacity)
 	}
 
-	fmt.Printf("FilterRecordBatch: filtered %d rows out of %d\n", filteredCount, batch.NumRows())
+	// Get the column to filter on
+	filterCol := batch.Column(options.ColumnIndex)
 
-	// Build the arrays for the filtered data
-	filteredIdArray := idBuilder.NewArray()
-	defer filteredIdArray.Release()
+	// Process the batch based on the data type of the filter column
+	filteredCount := 0
+	switch col := filterCol.(type) {
+	case *array.Float64:
+		filteredCount = filterFloat64Column(batch, col, options, builders)
+	case *array.Float32:
+		filteredCount = filterFloat32Column(batch, col, options, builders)
+	case *array.Int64:
+		filteredCount = filterInt64Column(batch, col, options, builders)
+	case *array.Int32:
+		filteredCount = filterInt32Column(batch, col, options, builders)
+	case *array.Int16:
+		filteredCount = filterInt16Column(batch, col, options, builders)
+	case *array.Int8:
+		filteredCount = filterInt8Column(batch, col, options, builders)
+	case *array.Uint64:
+		filteredCount = filterUint64Column(batch, col, options, builders)
+	case *array.Uint32:
+		filteredCount = filterUint32Column(batch, col, options, builders)
+	case *array.Uint16:
+		filteredCount = filterUint16Column(batch, col, options, builders)
+	case *array.Uint8:
+		filteredCount = filterUint8Column(batch, col, options, builders)
+	default:
+		return nil, fmt.Errorf("unsupported column type for filtering: %T", filterCol)
+	}
 
-	filteredValueArray := valueBuilder.NewArray()
-	defer filteredValueArray.Release()
+	if options.Debug {
+		fmt.Printf("FilterRecordBatchWithOptions: filtered %d rows out of %d\n", filteredCount, batch.NumRows())
+	}
 
-	filteredCategoryArray := categoryBuilder.NewArray()
-	defer filteredCategoryArray.Release()
+	// Build arrays from builders
+	for i := 0; i < int(batch.NumCols()); i++ {
+		arrays[i] = builders[i].NewArray()
+		defer arrays[i].Release()
+	}
 
 	// Create a record batch with the filtered data
-	filteredBatch := array.NewRecord(
-		schema,
-		[]arrow.Array{filteredIdArray, filteredValueArray, filteredCategoryArray},
-		int64(filteredCount))
+	filteredBatch := array.NewRecord(schema, arrays, int64(filteredCount))
 
 	// Important: We need to retain the batch since we're returning it
 	// and the deferred releases above would otherwise release the arrays
 	filteredBatch.Retain()
 
 	return filteredBatch, nil
+}
+
+// filterFloat64Column filters a batch based on a Float64 column
+func filterFloat64Column(batch arrow.Record, col *array.Float64, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := col.Value(rowIdx)
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterFloat32Column filters a batch based on a Float32 column
+func filterFloat32Column(batch arrow.Record, col *array.Float32, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterInt64Column filters a batch based on an Int64 column
+func filterInt64Column(batch arrow.Record, col *array.Int64, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterInt32Column filters a batch based on an Int32 column
+func filterInt32Column(batch arrow.Record, col *array.Int32, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterInt16Column filters a batch based on an Int16 column
+func filterInt16Column(batch arrow.Record, col *array.Int16, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterInt8Column filters a batch based on an Int8 column
+func filterInt8Column(batch arrow.Record, col *array.Int8, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterUint64Column filters a batch based on a Uint64 column
+func filterUint64Column(batch arrow.Record, col *array.Uint64, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterUint32Column filters a batch based on a Uint32 column
+func filterUint32Column(batch arrow.Record, col *array.Uint32, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterUint16Column filters a batch based on a Uint16 column
+func filterUint16Column(batch arrow.Record, col *array.Uint16, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// filterUint8Column filters a batch based on a Uint8 column
+func filterUint8Column(batch arrow.Record, col *array.Uint8, options FilterOptions, builders []array.Builder) int {
+	filteredCount := 0
+	for rowIdx := 0; rowIdx < int(batch.NumRows()); rowIdx++ {
+		if col.IsNull(rowIdx) {
+			continue // Skip null values
+		}
+
+		value := float64(col.Value(rowIdx))
+		if applyFloatCondition(value, options.Condition, options.Threshold) {
+			// This row passes the filter, append values from all columns
+			appendRowToBuilders(batch, rowIdx, builders)
+			filteredCount++
+		}
+	}
+	return filteredCount
+}
+
+// applyFloatCondition applies the specified condition to a float value
+func applyFloatCondition(value float64, condition FilterCondition, threshold float64) bool {
+	switch condition {
+	case GreaterThan:
+		return value > threshold
+	case LessThan:
+		return value < threshold
+	case EqualTo:
+		return value == threshold
+	case NotEqualTo:
+		return value != threshold
+	case GreaterThanOrEqual:
+		return value >= threshold
+	case LessThanOrEqual:
+		return value <= threshold
+	default:
+		return false
+	}
+}
+
+// appendRowToBuilders appends values from a specific row to all builders
+func appendRowToBuilders(batch arrow.Record, rowIdx int, builders []array.Builder) {
+	for colIdx, builder := range builders {
+		col := batch.Column(colIdx)
+		if col.IsNull(rowIdx) {
+			builder.AppendNull()
+			continue
+		}
+
+		// Append the value based on the column type
+		switch col := col.(type) {
+		case *array.Int8:
+			builder.(*array.Int8Builder).Append(col.Value(rowIdx))
+		case *array.Int16:
+			builder.(*array.Int16Builder).Append(col.Value(rowIdx))
+		case *array.Int32:
+			builder.(*array.Int32Builder).Append(col.Value(rowIdx))
+		case *array.Int64:
+			builder.(*array.Int64Builder).Append(col.Value(rowIdx))
+		case *array.Uint8:
+			builder.(*array.Uint8Builder).Append(col.Value(rowIdx))
+		case *array.Uint16:
+			builder.(*array.Uint16Builder).Append(col.Value(rowIdx))
+		case *array.Uint32:
+			builder.(*array.Uint32Builder).Append(col.Value(rowIdx))
+		case *array.Uint64:
+			builder.(*array.Uint64Builder).Append(col.Value(rowIdx))
+		case *array.Float32:
+			builder.(*array.Float32Builder).Append(col.Value(rowIdx))
+		case *array.Float64:
+			builder.(*array.Float64Builder).Append(col.Value(rowIdx))
+		case *array.Boolean:
+			builder.(*array.BooleanBuilder).Append(col.Value(rowIdx))
+		case *array.String:
+			builder.(*array.StringBuilder).Append(col.Value(rowIdx))
+		case *array.Binary:
+			builder.(*array.BinaryBuilder).Append(col.Value(rowIdx))
+		default:
+			// For unsupported types, append null
+			builder.AppendNull()
+		}
+	}
+}
+
+// Deprecated: FilterRecordBatch is deprecated. Use FilterRecordBatchWithOptions instead.
+// This function performs a filtering operation on a RecordBatch using the second column
+// and a greater-than threshold condition.
+func FilterRecordBatch(batch arrow.Record, threshold float64, pool memory.Allocator) (arrow.Record, error) {
+	// Create options for backward compatibility
+	options := FilterOptions{
+		ColumnIndex: 1,           // Filter on the second column (index 1)
+		Condition:   GreaterThan, // Use greater than condition
+		Threshold:   threshold,   // Use the provided threshold
+		Debug:       true,        // Keep debug output for backward compatibility
+	}
+
+	return FilterRecordBatchWithOptions(batch, options, pool)
+}
+
+// FilterBatchProcessorWithOptions implements the BatchProcessor interface for enhanced filtering operations
+type FilterBatchProcessorWithOptions struct {
+	options FilterOptions
+	pool    memory.Allocator
+}
+
+// NewFilterBatchProcessorWithOptions creates a new FilterBatchProcessorWithOptions
+func NewFilterBatchProcessorWithOptions(options FilterOptions, pool memory.Allocator) *FilterBatchProcessorWithOptions {
+	if pool == nil {
+		pool = memory.NewGoAllocator()
+	}
+	return &FilterBatchProcessorWithOptions{
+		options: options,
+		pool:    pool,
+	}
+}
+
+// ProcessBatch processes a single RecordBatch by filtering rows
+func (p *FilterBatchProcessorWithOptions) ProcessBatch(batch arrow.Record, config map[string]string) (arrow.Record, error) {
+	// Check if options are overridden in the config
+	options := p.options
+
+	if colIdxStr, ok := config["columnIndex"]; ok {
+		if colIdx, err := strconv.Atoi(colIdxStr); err == nil {
+			options.ColumnIndex = colIdx
+		}
+	}
+
+	if condStr, ok := config["condition"]; ok {
+		if cond, err := strconv.Atoi(condStr); err == nil {
+			options.Condition = FilterCondition(cond)
+		}
+	}
+
+	if thresholdStr, ok := config["threshold"]; ok {
+		if threshold, err := strconv.ParseFloat(thresholdStr, 64); err == nil {
+			options.Threshold = threshold
+		}
+	}
+
+	if debugStr, ok := config["debug"]; ok {
+		options.Debug = debugStr == "true"
+	}
+
+	return FilterRecordBatchWithOptions(batch, options, p.pool)
+}
+
+// Release releases any resources held by the processor
+func (p *FilterBatchProcessorWithOptions) Release() {
+	// Nothing to release in this implementation
 }
 
 // Helper function for min
@@ -449,14 +798,22 @@ func NewFilterBatchProcessor(threshold float64, pool memory.Allocator) *FilterBa
 // ProcessBatch processes a single RecordBatch by filtering rows
 func (p *FilterBatchProcessor) ProcessBatch(batch arrow.Record, config map[string]string) (arrow.Record, error) {
 	// Check if threshold is overridden in the config
+	threshold := p.threshold
 	if thresholdStr, ok := config["filterThreshold"]; ok {
-		var parsedThreshold float64
-		if _, err := fmt.Sscanf(thresholdStr, "%f", &parsedThreshold); err == nil {
-			p.threshold = parsedThreshold
+		if parsedThreshold, err := strconv.ParseFloat(thresholdStr, 64); err == nil {
+			threshold = parsedThreshold
 		}
 	}
 
-	return FilterRecordBatch(batch, p.threshold, p.pool)
+	// Create options for the new filter function
+	options := FilterOptions{
+		ColumnIndex: 1,           // Filter on the second column (index 1)
+		Condition:   GreaterThan, // Use greater than condition
+		Threshold:   threshold,   // Use the provided threshold
+		Debug:       false,       // Disable debug output for production use
+	}
+
+	return FilterRecordBatchWithOptions(batch, options, p.pool)
 }
 
 // Release releases any resources held by the processor
