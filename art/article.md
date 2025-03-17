@@ -1,6 +1,6 @@
-# Scaling Data Pipelines with Temporal and Apache Arrow Flight
+# Zero-Copy, Zero-Delay
 
-## Mach Speed for Your Data
+## Scaling Data Pipelines with Temporal & Arrow Flight
 
 I believe, deeply, that if we can make data movement instantaneous, we change the world.
 
@@ -58,7 +58,7 @@ Here's how it all fits together:
 
 #### Why This Approach is Special
 
-The integration of Temporal and Apache Arrow Flight represents a paradigm shift in data pipeline architecture. Here's why this approach stands out:
+Here's why this approach stands out:
 
 1. **Memory-Efficient Orchestration**: Traditional data pipelines often suffer from the "double serialization problem" - data is serialized once to pass between services and again to store workflow state. Our approach eliminates this by keeping large data payloads outside the workflow state, passing only lightweight references through Temporal.
 
@@ -72,14 +72,10 @@ The integration of Temporal and Apache Arrow Flight represents a paradigm shift 
 
 6. **Language Agnostic**: Both Temporal and Arrow Flight support multiple programming languages, allowing teams to build polyglot data pipelines where each component uses the most appropriate language for its task - Go for orchestration, Python for ML processing, Java for integration with existing systems, etc.
 
-The result is a data pipeline architecture that doesn't just incrementally improve on existing patterns - it fundamentally reimagines how data should flow through distributed systems. By keeping Temporal focused on what it does best (orchestration) and leveraging Arrow Flight for high-performance data movement, we've created a system that can handle orders of magnitude more data with significantly less infrastructure.
+The result is not just an incremental improvement on existing patterns — it’s a fundamental reimagining of how data should flow through distributed systems. By allowing Temporal to focus on orchestration and leveraging Apache Arrow Flight for high-performance data movement, we’ve built a system capable of handling orders of magnitude more data with significantly less infrastructure.
 
-A Temporal Server orchestrates workflows, delegating tasks to Activity Workers, each handling a stage of the pipeline. The Arrow Flight Server acts as a high-speed intermediary, enabling workers to push, retrieve, and process data without bottlenecks. Apache Arrow's columnar format ensures zero-copy transfers and vectorized execution for maximum efficiency. Processed data is either persisted or automatically cleaned up based on TTL policies.
+At the core of this architecture, a Temporal Server orchestrates workflows, delegating tasks to Activity Workers, each responsible for a specific stage of the pipeline. Meanwhile, the Arrow Flight Server acts as a high-speed intermediary, enabling workers to push, retrieve, and process data without bottlenecks. Thanks to Apache Arrow’s columnar format, data moves seamlessly through the pipeline with zero-copy transfers and vectorized execution, ensuring maximum efficiency. Processed data is either persisted or automatically cleaned up based on TTL policies.
 
-Rather than dragging massive payloads through the workflow, we pass only lightweight batch IDs. Instead of flooding Temporal with raw data, each activity references a stored batch, retrieving it only when needed.
-
-This architecture keeps Temporal focused on orchestration, Arrow Flight handling data movement, and Arrow's in-memory format maximizing processing efficiency — all working together to create a scalable, high-performance pipeline.
-
-No drag. No delays. Just pure acceleration.
+Instead of dragging massive payloads through the workflow, we pass only lightweight batch IDs. Rather than burdening Temporal with raw data, each activity simply references a stored batch, retrieving it only when needed. This approach keeps Temporal lean, Arrow Flight fast, and data movement frictionless — a trifecta of efficiency that enables truly scalable, high-performance pipelines.
 
 Ready for takeoff? Explore the repo [here](https://github.com/TFMV/temporal).
