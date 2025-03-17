@@ -377,26 +377,46 @@ func (p *ArcheryFilterBatchProcessor) ProcessBatch(batch arrow.Record, config ma
 			case arrow.INT8, arrow.INT16, arrow.INT32, arrow.INT64:
 				// Parse as int
 				var intValue int64
-				fmt.Sscanf(valueStr, "%d", &intValue)
-				options.Value = intValue
+				_, err := fmt.Sscanf(valueStr, "%d", &intValue)
+				if err != nil {
+					// If parsing fails, try to use the string as is
+					options.Value = valueStr
+				} else {
+					options.Value = intValue
+				}
 			case arrow.UINT8, arrow.UINT16, arrow.UINT32, arrow.UINT64:
 				// Parse as uint
 				var uintValue uint64
-				fmt.Sscanf(valueStr, "%d", &uintValue)
-				options.Value = uintValue
+				_, err := fmt.Sscanf(valueStr, "%d", &uintValue)
+				if err != nil {
+					// If parsing fails, try to use the string as is
+					options.Value = valueStr
+				} else {
+					options.Value = uintValue
+				}
 			case arrow.FLOAT32, arrow.FLOAT64:
 				// Parse as float
 				var floatValue float64
-				fmt.Sscanf(valueStr, "%f", &floatValue)
-				options.Value = floatValue
+				_, err := fmt.Sscanf(valueStr, "%f", &floatValue)
+				if err != nil {
+					// If parsing fails, try to use the string as is
+					options.Value = valueStr
+				} else {
+					options.Value = floatValue
+				}
 			case arrow.STRING, arrow.LARGE_STRING:
 				// Use as string
 				options.Value = valueStr
 			case arrow.BOOL:
 				// Parse as bool
 				var boolValue bool
-				fmt.Sscanf(valueStr, "%t", &boolValue)
-				options.Value = boolValue
+				_, err := fmt.Sscanf(valueStr, "%t", &boolValue)
+				if err != nil {
+					// If parsing fails, try to use the string as is
+					options.Value = valueStr
+				} else {
+					options.Value = boolValue
+				}
 			}
 		}
 	}
