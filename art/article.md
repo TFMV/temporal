@@ -70,61 +70,19 @@ The future of data processing isn't about bigger clusters or faster networks. It
 
 ## The Journey to Enterprise Grade
 
-As I continue to push the boundaries of what's possible with Flight Orchestration, I'm focusing on six key areas that will transform this prototype into an enterprise-grade solution:
+The path from prototype to enterprise solution is ambitious but clear. I've mapped out six key phases that will transform this experimental system into a production-ready platform:
 
-### 1. Data Durability & Recovery
+1. **Data Durability & Recovery**: Building a distributed checkpointing system to ensure zero data loss and sub-5-second recovery times.
 
-The most critical challenge is ensuring data durability when managing data outside Temporal's workflow state. I'm building a distributed checkpointing system that will:
+2. **Enterprise Security**: Implementing end-to-end security with RBAC, encryption, and comprehensive audit logging.
 
-- Store Arrow Flight data references in a durable store
-- Maintain checkpoint metadata in Temporal workflow state
-- Enable automatic recovery from failures
-- Implement data lifecycle management with TTL policies
+3. **Observability & Monitoring**: Adding deep visibility with distributed tracing and real-time performance metrics.
 
-### 2. Enterprise Security
+4. **Scalability & Performance**: Enabling horizontal scaling with dynamic workers and intelligent load balancing.
 
-Security isn't an afterthought — it's a foundation. The next phase will add:
+5. **Enterprise Integration**: Supporting multi-tenancy, disaster recovery, and enterprise authentication.
 
-- Arrow Flight authentication and RBAC
-- Encryption at rest and in transit
-- Data masking and sensitive data detection
-- Comprehensive audit logging
-
-### 3. Observability & Monitoring
-
-To make this system production-ready, we need deep visibility:
-
-- Detailed performance metrics and resource tracking
-- Distributed tracing and structured logging
-- SLA monitoring and alerting
-- Cost tracking and optimization
-
-### 4. Scalability & Performance
-
-The system must scale without breaking:
-
-- Dynamic worker scaling and load balancing
-- Data partitioning and sharding
-- Query optimization and caching
-- Performance profiling and tuning
-
-### 5. Enterprise Integration
-
-Finally, we'll add the features that make it enterprise-ready:
-
-- Multi-tenant support and resource quotas
-- Backup and disaster recovery
-- Enterprise authentication integration
-- Compliance reporting and auditing
-
-### 6. ETL & Data Processing Integration
-
-The final piece of the puzzle is seamless integration with the data processing ecosystem:
-
-- Zero-copy integration with Badgers DataFrame API
-- Seamless Polars integration for Python users
-- Support for all major Arrow-compatible tools
-- Sub-millisecond data transformation latency
+6. **ETL & Data Processing**: Integrating with the [Badgers DataFrame API](https://github.com/TFMV/badgers) and other Arrow-compatible tools.
 
 The target metrics are ambitious but achievable:
 
@@ -133,7 +91,8 @@ The target metrics are ambitious but achievable:
 - Latency under 100ms
 - Throughput over 1M records/second
 - 99.999% uptime
-- Sub-millisecond data transformations
+
+For a detailed breakdown of each phase, implementation details, and technical specifications, see the [complete roadmap](roadmap.md).
 
 ## Join the Experiment
 
@@ -144,4 +103,4 @@ The future of data processing is here. It's columnar. It's zero-copy. It's orche
 *This is an experimental prototype. Your feedback and contributions are welcome.*
 
 ---
-*Thomas F McGeehan V is exploring the intersection of workflow orchestration and high-performance data processing. Follow his journey on GitHub.*
+*Thomas F McGeehan V is exploring the intersection of workflow orchestration and high-performance data processing. Follow his journey on [GitHub](https://github.com/TFMV).*
