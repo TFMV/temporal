@@ -31,6 +31,10 @@ But Arrow Flight alone wasn't enough. We needed a way to orchestrate these high-
 
 ## The Architecture That Changed Everything
 
+Here's how it all fits together:
+
+![Architecture](temporal.png)
+
 What I've built is an experimental prototype that combines:
 
 - **Temporal's Workflow Engine**: For robust orchestration and fault tolerance
