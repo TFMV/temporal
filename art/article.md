@@ -2,7 +2,7 @@
 
 *Exploring the Intersection of Temporal and Apache Arrow Flight*
 
-> I believe, deeply, that if we make data movement instantaneous, we change the world.
+I believe, deeply, that if we make data movement instantaneous, we change the world. Marginally faster row-based systems aren't enough. What we need is a fundamental shift in how we move and process data. That shift is Arrow.
 
 ## The Experiment Begins
 
