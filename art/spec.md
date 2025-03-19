@@ -475,6 +475,7 @@ flowchart TB
     classDef monitoring fill:#9370DB,stroke:#7B68EE,stroke-width:2px,color:white
     classDef tenancy fill:#20B2AA,stroke:#008080,stroke-width:2px,color:white
     classDef badgers fill:#CD853F,stroke:#8B4513,stroke-width:2px,color:white
+    classDef sql fill:#FF69B4,stroke:#FF1493,stroke-width:2px,color:white
 
     %% Core Components
     FC["Flight Coordinator"]:::flight
@@ -496,6 +497,23 @@ flowchart TB
         AF["Arrow Flight Cluster"]:::flight
         BD["Badgers DataFrame Engine"]:::badgers
         VECT["Vectorized Operations"]:::arrow
+        
+        %% Flight SQL Components
+        subgraph FlightSQL ["Flight SQL Layer"]
+            direction TB
+            FSQL["Flight SQL Server"]:::sql
+            FCAT["SQL Catalog"]:::sql
+            FEXEC["SQL Executor"]:::sql
+            FOPT["Query Optimizer"]:::sql
+        end
+    end
+
+    %% SQL Data Sources
+    subgraph DataSources ["SQL Data Sources"]
+        direction TB
+        PG["PostgreSQL"]:::sql
+        MYSQL["MySQL"]:::sql
+        SNOW["Snowflake"]:::sql
     end
 
     %% Durability Layer
@@ -537,10 +555,19 @@ flowchart TB
     Processing --> Durability
     Durability --> ETCD
 
+    %% Flight SQL Integration
+    FlightSQL --> DataSources
+    FlightSQL --> AF
+    BD --> FlightSQL
+    FSQL --> FCAT
+    FSQL --> FEXEC
+    FEXEC --> FOPT
+
     %% Security Integration
     FC --> Security
     Security --> Processing
     Security --> Durability
+    Security --> FlightSQL
 
     %% Processing Layer Detail
     VECT --> BD
@@ -554,20 +581,18 @@ flowchart TB
     Monitoring --> FC
     Monitoring --> Processing
     Monitoring --> Durability
+    Monitoring --> FlightSQL
 
     %% Scaling Connections
     Scaling --> FC
     Scaling --> Processing
+    Scaling --> FlightSQL
     METRIC -.-> AS
 
     %% Multi-tenancy Connections
     Tenancy --> Security
     Tenancy --> Processing
-
-    %% Security Layer Management
-    AUTH --> RBAC
-    AUTH --> AUDIT
-    AUTH --> ENCRYPT
+    Tenancy --> FlightSQL
 ```
 
 ### Component Responsibilities
@@ -663,3 +688,143 @@ flowchart TB
    - Query optimization
    - Vectorized processing
    - Zero-copy integration
+
+## Flight SQL Integration
+
+The Flight SQL integration extends our architecture to provide native SQL database connectivity while maintaining the zero-copy, columnar format advantages of Arrow Flight.
+
+### Flight SQL Components
+
+1. **Flight SQL Server**
+   - Implements the Flight SQL protocol
+   - Handles SQL-specific RPC methods
+   - Manages database connections
+   - Translates SQL queries to Arrow format
+
+2. **SQL Catalog**
+   - Maintains metadata about available databases
+   - Tracks table schemas and statistics
+   - Manages database connection information
+   - Provides catalog browsing capabilities
+
+3. **SQL Executor**
+   - Executes SQL queries against data sources
+   - Manages query planning and optimization
+   - Handles distributed query execution
+   - Provides transaction management
+
+4. **Query Optimizer**
+   - Optimizes SQL queries for Arrow format
+   - Pushes down predicates to data sources
+   - Plans efficient data retrieval strategies
+   - Leverages columnar format for optimization
+
+### Integration Benefits
+
+1. **Native SQL Support**
+   - Direct SQL query execution
+   - Zero-copy results in Arrow format
+   - Support for multiple SQL databases
+   - Unified query interface
+
+2. **Performance Optimization**
+   - Query pushdown to data sources
+   - Columnar-aware optimization
+   - Parallel query execution
+   - Efficient memory utilization
+
+3. **Seamless Integration**
+   - Works with existing Flight infrastructure
+   - Maintains zero-copy advantages
+   - Supports streaming results
+   - Compatible with Badgers DataFrame API
+
+### SQL Data Source Support
+
+1. **PostgreSQL Integration**
+   - Native PostgreSQL protocol support
+   - Custom type mapping to Arrow
+   - Parallel query execution
+   - Statistics-based optimization
+
+2. **MySQL Integration**
+   - MySQL protocol implementation
+   - Transaction management
+   - Connection pooling
+   - Query plan optimization
+
+3. **Snowflake Integration**
+   - Snowflake-specific optimizations
+   - Warehouse management
+   - Resource monitoring
+   - Cost optimization
+
+### Implementation Details
+
+```go
+// Flight SQL Server implementation
+type FlightSQLServer struct {
+    catalog    *SQLCatalog
+    executor   *SQLExecutor
+    optimizer  *QueryOptimizer
+    connPool   *ConnectionPool
+}
+
+// SQL Catalog for managing database metadata
+type SQLCatalog struct {
+    databases map[string]*DatabaseInfo
+    schemas   map[string]*SchemaInfo
+    tables    map[string]*TableInfo
+}
+
+// SQL Executor for query execution
+type SQLExecutor struct {
+    optimizer    *QueryOptimizer
+    coordinator *FlightCoordinator
+    metrics     *MetricsCollector
+}
+
+// Query Optimizer for performance
+type QueryOptimizer struct {
+    stats        *Statistics
+    costModel    *CostModel
+    rules        []OptimizationRule
+}
+
+// Example Flight SQL query execution
+func (s *FlightSQLServer) ExecuteQuery(ctx context.Context, query string) (*arrow.RecordBatch, error) {
+    // Parse and validate query
+    plan, err := s.optimizer.OptimizeQuery(query)
+    if err != nil {
+        return nil, err
+    }
+
+    // Execute query and get results in Arrow format
+    batch, err := s.executor.ExecutePlan(ctx, plan)
+    if err != nil {
+        return nil, err
+    }
+
+    return batch, nil
+}
+```
+
+### Security Considerations
+
+1. **Authentication**
+   - Database credential management
+   - Connection encryption
+   - Token-based authentication
+   - Role-based access control
+
+2. **Data Protection**
+   - Column-level security
+   - Row-level security
+   - Query auditing
+   - Data masking
+
+3. **Compliance**
+   - Query logging
+   - Access tracking
+   - Policy enforcement
+   - Regulatory compliance
