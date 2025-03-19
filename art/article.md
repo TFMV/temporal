@@ -1,12 +1,12 @@
-# Flight Orchestration: A Personal Journey into the Future of Data Processing
+# Flight at Scale
 
 *Exploring the Intersection of Temporal and Apache Arrow Flight*
 
 ## The Experiment Begins
 
-I've always been fascinated by the intersection of workflow orchestration and data processing. For years, I watched as data engineers struggled with the limitations of traditional ETL pipelines, their performance constrained by serialization overhead and memory inefficiencies. But what if we could break free from these constraints?
+I've always been drawn to the place where workflow orchestration meets data processing. Year after year, I've seen talented data engineers fighting the same frustrating battles—slow ETLs bogged down by serialization overhead, endless memory inefficiencies, pipelines that felt more like compromises than solutions. But what if it didn't have to be this way?
 
-This is the story of my experimental journey into combining Temporal's robust workflow engine with Apache Arrow Flight's zero-copy data movement. It's not just about technology — it's about reimagining how we move and process data at scale.
+This is my story of testing those limits—combining Temporal's powerful orchestration engine with Apache Arrow Flight's zero-copy data movement. It's not just about new tools or fancy tech demos. It's about stepping away from old assumptions and discovering what's possible when we rethink how data moves at scale.
 
 ## The Problem That Kept Me Up at Night
 
@@ -21,7 +21,7 @@ In my work with large-scale data pipelines, I've encountered a persistent challe
 
 Each step adds latency. Each transformation consumes CPU cycles. Each serialization creates memory pressure. I knew there had to be a better way.
 
-## Enter Arrow Flight: A Glimpse of the Future
+## A Glimpse of the Future
 
 Apache Arrow Flight caught my attention because it promised something revolutionary: zero-copy data movement over the network. Instead of serializing and deserializing data at each step, Arrow Flight maintains data in its native columnar format throughout the pipeline.
 
@@ -35,7 +35,7 @@ What I've built is an experimental prototype that combines:
 - **Arrow Flight**: For zero-copy data movement
 - **Columnar Processing**: For vectorized operations on the fly
 
-The result? A system that can move and process data at near-hardware speeds while maintaining the reliability of a production-grade workflow engine.
+The result is a system that can move and process data at near-hardware speeds while maintaining the reliability of a production-grade workflow engine.
 
 ## Why This Matters
 
