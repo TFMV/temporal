@@ -92,6 +92,10 @@ The target metrics are ambitious but achievable:
 - Throughput over 1M records/second
 - 99.999% uptime
 
+Here's our target state architecture:
+
+![Target State](target.png)
+
 For a detailed breakdown of each phase, implementation details, and technical specifications, see the [complete roadmap](roadmap.md).
 
 ## Join the Experiment
