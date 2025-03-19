@@ -36,6 +36,7 @@ What I've built is an experimental prototype that combines:
 - **Temporal's Workflow Engine**: For robust orchestration and fault tolerance
 - **Arrow Flight**: For zero-copy data movement
 - **Columnar Processing**: For vectorized operations on the fly
+- **Badgers DataFrame API**: A native Go implementation for high-performance data manipulation
 
 The result is a system that can move and process data at near-hardware speeds while maintaining the reliability of a production-grade workflow engine.
 
@@ -55,6 +56,8 @@ The implications of this approach are profound:
 
 6. **Language Agnostic**: The system can handle polyglot data pipelines with ease.
 
+7. **Native Data Processing**: Badgers provides a Go-native DataFrame API for seamless integration.
+
 ## The Road Ahead
 
 This is still an experimental prototype, but the results are promising.
@@ -63,7 +66,7 @@ The future of data processing isn't about bigger clusters or faster networks. It
 
 ## The Journey to Enterprise Grade
 
-As I continue to push the boundaries of what's possible with Flight Orchestration, I'm focusing on five key areas that will transform this prototype into an enterprise-grade solution:
+As I continue to push the boundaries of what's possible with Flight Orchestration, I'm focusing on six key areas that will transform this prototype into an enterprise-grade solution:
 
 ### 1. Data Durability & Recovery
 
@@ -110,6 +113,15 @@ Finally, we'll add the features that make it enterprise-ready:
 - Enterprise authentication integration
 - Compliance reporting and auditing
 
+### 6. ETL & Data Processing Integration
+
+The final piece of the puzzle is seamless integration with the data processing ecosystem:
+
+- Zero-copy integration with Badgers DataFrame API
+- Seamless Polars integration for Python users
+- Support for all major Arrow-compatible tools
+- Sub-millisecond data transformation latency
+
 The target metrics are ambitious but achievable:
 
 - Zero data loss during failures
@@ -117,6 +129,7 @@ The target metrics are ambitious but achievable:
 - Latency under 100ms
 - Throughput over 1M records/second
 - 99.999% uptime
+- Sub-millisecond data transformations
 
 ## Join the Experiment
 
@@ -125,3 +138,6 @@ I'm actively working on this prototype and would love to collaborate with others
 The future of data processing is here. It's columnar. It's zero-copy. It's orchestrated. And it's just getting started.
 
 *This is an experimental prototype. Your feedback and contributions are welcome.*
+
+---
+*Thomas F McGeehan V is exploring the intersection of workflow orchestration and high-performance data processing. Follow his journey on GitHub.*
