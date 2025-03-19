@@ -2,9 +2,11 @@
 
 *Exploring the Intersection of Temporal and Apache Arrow Flight*
 
+> I believe, deeply, that if we make data movement instantaneous, we change the world.
+
 ## The Experiment Begins
 
-I've always been drawn to the place where workflow orchestration meets data processing. Year after year, I've seen talented data engineers fighting the same frustrating battles—slow ETLs bogged down by serialization overhead, endless memory inefficiencies, pipelines that felt more like compromises than solutions. But what if it didn't have to be this way?
+Performance has always been the undercurrent. Year after year, I've seen talented data engineers fighting the same frustrating battles—slow ETLs bogged down by serialization overhead, endless memory inefficiencies, pipelines that felt more like compromises than solutions. But what if it didn't have to be this way?
 
 This is my story of testing those limits—combining Temporal's powerful orchestration engine with Apache Arrow Flight's zero-copy data movement. It's not just about new tools or fancy tech demos. It's about stepping away from old assumptions and discovering what's possible when we rethink how data moves at scale.
 
@@ -59,7 +61,7 @@ This is still an experimental prototype, but the results are promising.
 
 The future of data processing isn't about bigger clusters or faster networks. It's about smarter architectures that eliminate unnecessary overhead. This prototype is just the beginning.
 
-## What's Next: The Journey to Enterprise Grade
+## The Journey to Enterprise Grade
 
 As I continue to push the boundaries of what's possible with Flight Orchestration, I'm focusing on five key areas that will transform this prototype into an enterprise-grade solution:
 
