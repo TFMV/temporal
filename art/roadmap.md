@@ -1,4 +1,23 @@
-# Roadmap: Evolving to Enterprise Grade
+# Roadmap
+
+## System Architecture Overview
+
+The system is built on three core principles:
+
+1. Zero-copy data movement
+2. Distributed durability
+3. Scalable orchestration
+
+```mermaid
+graph TD
+    A[Temporal Workflow Engine] --> B[Flight Coordinator]
+    B --> C[Arrow Flight Cluster]
+    B --> D[Checkpoint Manager]
+    D --> E[etcd Cluster]
+    C --> F[Data Processing Layer]
+    F --> G[Badgers DataFrame Engine]
+    B --> H[Metrics & Monitoring]
+```
 
 ## Current State Analysis
 
@@ -24,77 +43,171 @@ The current prototype demonstrates the power of combining Temporal's workflow en
    - Challenge: Resource contention between workflow and data operations
    - Challenge: No automatic scaling mechanisms
 
+## Core Components
+
+### Flight Coordinator
+
+```go
+type FlightCoordinator struct {
+    // Core components
+    temporalClient   temporal.Client
+    checkpointer     *CheckpointCoordinator
+    flightCluster    *FlightCluster
+    metrics         *SystemMetrics
+
+    // Security
+    authProvider    auth.Provider
+    encryptionKeys *keys.Manager
+
+    // Scaling
+    autoScaler     *AutoScaler
+    loadBalancer   *LoadBalancer
+}
+
+func (fc *FlightCoordinator) ProcessDataBatch(ctx context.Context, batch *DataBatch) error {
+    // 1. Create checkpoint
+    checkpoint, err := fc.checkpointer.CreateCheckpoint(ctx, batch)
+    if err != nil {
+        return fmt.Errorf("checkpoint creation failed: %w", err)
+    }
+
+    // 2. Distribute data across Flight cluster
+    flightRefs, err := fc.flightCluster.DistributeData(ctx, batch, checkpoint)
+    if err != nil {
+        return fmt.Errorf("data distribution failed: %w", err)
+    }
+
+    // 3. Update workflow state with references
+    if err := fc.updateWorkflowState(ctx, flightRefs); err != nil {
+        return fmt.Errorf("workflow state update failed: %w", err)
+    }
+
+    // 4. Monitor processing
+    return fc.monitorProcessing(ctx, flightRefs)
+}
+```
+
 ## Phase 1: Data Durability & Recovery
 
-### 1.1 Distributed Checkpointing System
+### Unified Checkpointing System
 
-- **Implementation**: Build a distributed checkpointing system using etcd for metadata coordination
-- **Technical Solution**:
+```go
+type CheckpointCoordinator struct {
+    etcdClient    *clientv3.Client
+    flightCluster *FlightCluster
+    store         storage.Store
+    metrics       *SystemMetrics
+}
 
-  ```go
-  type CheckpointCoordinator struct {
-      etcdClient *clientv3.Client
-      flightClient flight.Client
-      checkpointStore storage.Store
-  }
+type Checkpoint struct {
+    ID            string
+    WorkflowID    string
+    FlightRefs    []FlightDataRef
+    Metadata      map[string]interface{}
+    Version       int64
+    State         CheckpointState
+    CreatedAt     time.Time
+}
 
-  func (c *CheckpointCoordinator) CreateCheckpoint(ctx context.Context, data *arrow.Record) (*Checkpoint, error) {
-      // 1. Generate unique checkpoint ID
-      // 2. Store data in durable storage with versioning
-      // 3. Record metadata in etcd with TTL
-      // 4. Return checkpoint reference
-  }
-  ```
+func (cc *CheckpointCoordinator) CreateCheckpoint(ctx context.Context, data *arrow.Record) (*Checkpoint, error) {
+    // 1. Begin distributed transaction
+    tx, err := cc.store.BeginTx(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("failed to begin transaction: %w", err)
+    }
+    defer tx.Rollback()
 
-### 1.2 Data Recovery Protocol
+    // 2. Create checkpoint with versioning
+    checkpoint := &Checkpoint{
+        ID:         uuid.New().String(),
+        WorkflowID: ctx.Value(WorkflowIDKey).(string),
+        Version:    cc.nextVersion(),
+        CreatedAt:  time.Now(),
+    }
 
-- **Implementation**: Design a three-phase commit protocol for data recovery
-  1. Prepare: Verify data availability
-  2. Validate: Check data integrity
-  3. Commit: Update system state
-- **Technical Solution**:
+    // 3. Store data with references
+    if err := cc.storeDataWithRefs(ctx, tx, checkpoint, data); err != nil {
+        return nil, fmt.Errorf("failed to store data: %w", err)
+    }
 
-  ```go
-  type RecoveryProtocol struct {
-      coordinator *CheckpointCoordinator
-      validators []DataValidator
-      metrics *RecoveryMetrics
-  }
+    // 4. Commit transaction
+    if err := tx.Commit(); err != nil {
+        return nil, fmt.Errorf("failed to commit transaction: %w", err)
+    }
 
-  func (r *RecoveryProtocol) RecoverFromFailure(ctx context.Context, failure *FailureEvent) error {
-      // 1. Identify affected data regions
-      // 2. Load latest valid checkpoint
-      // 3. Replay operations since checkpoint
-      // 4. Verify consistency
-  }
-  ```
+    return checkpoint, nil
+}
+```
 
-## Phase 2: Enterprise Security
+### Recovery Protocol
 
-### 2.1 End-to-End Encryption
+```go
+type RecoveryManager struct {
+    coordinator  *CheckpointCoordinator
+    consensus   *ConsensusManager
+    metrics     *SystemMetrics
+}
 
-- **Implementation**: Implement TLS with mutual authentication for Arrow Flight
-- **Technical Solution**:
+func (rm *RecoveryManager) RecoverFromFailure(ctx context.Context, failure *FailureEvent) error {
+    // 1. Acquire distributed lock
+    lock, err := rm.consensus.AcquireLock(ctx, failure.Region)
+    if err != nil {
+        return fmt.Errorf("failed to acquire lock: %w", err)
+    }
+    defer lock.Release()
 
-  ```go
-  type SecureFlightServer struct {
-      *flight.Server
-      authProvider auth.Provider
-      encryptionKeys *keys.Manager
-  }
+    // 2. Load latest valid checkpoint
+    checkpoint, err := rm.coordinator.GetLatestCheckpoint(ctx, failure.WorkflowID)
+    if err != nil {
+        return fmt.Errorf("failed to get checkpoint: %w", err)
+    }
 
-  func (s *SecureFlightServer) DoGet(ctx context.Context, request *flight.Ticket) (*flight.DataStream, error) {
-      // 1. Authenticate request
-      // 2. Authorize access
-      // 3. Encrypt data stream
-      // 4. Return encrypted stream
-  }
-  ```
+    // 3. Verify data integrity
+    if err := rm.verifyDataIntegrity(ctx, checkpoint); err != nil {
+        return fmt.Errorf("data integrity check failed: %w", err)
+    }
 
-### 2.2 Access Control
+    // 4. Rebuild state
+    return rm.rebuildState(ctx, checkpoint)
+}
+```
 
-- **Implementation**: Role-based access control with attribute-based policies
-- **Technical Solution**: Use Open Policy Agent for flexible policy enforcement
+## Phase 2: Security & Access Control
+
+### Unified Security Layer
+
+```go
+type SecurityManager struct {
+    authProvider    auth.Provider
+    encryptionKeys *keys.Manager
+    policyEngine   *opa.Engine
+    auditLogger    *AuditLogger
+}
+
+func (sm *SecurityManager) SecureFlightStream(ctx context.Context, stream *flight.DataStream) (*flight.DataStream, error) {
+    // 1. Authenticate request
+    identity, err := sm.authProvider.Authenticate(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("authentication failed: %w", err)
+    }
+
+    // 2. Check authorization
+    if err := sm.policyEngine.Evaluate(ctx, identity, stream.Action); err != nil {
+        return nil, fmt.Errorf("authorization failed: %w", err)
+    }
+
+    // 3. Encrypt stream
+    encryptedStream, err := sm.encryptStream(ctx, stream)
+    if err != nil {
+        return nil, fmt.Errorf("encryption failed: %w", err)
+    }
+
+    // 4. Log audit event
+    sm.auditLogger.LogAccess(ctx, identity, stream.Action)
+
+    return encryptedStream, nil
+}
+```
 
 ## Phase 3: Observability & Monitoring
 
@@ -187,46 +300,88 @@ The current prototype demonstrates the power of combining Temporal's workflow en
   }
   ```
 
-## Technical Challenges and Solutions
+## Integration Points
 
-### Memory Management
+### 1. Temporal Integration
 
-- **Challenge**: Large data transfers can exhaust memory
-- **Solution**: Implement streaming window with backpressure
+```go
+type TemporalIntegration struct {
+    coordinator    *FlightCoordinator
+    checkpointer   *CheckpointCoordinator
+    security      *SecurityManager
+}
 
-  ```go
-  type StreamWindow struct {
-      size int64
-      current int64
-      pressure float64
-  }
-  ```
+func (ti *TemporalIntegration) WorkflowHandler(ctx workflow.Context, input *WorkflowInput) error {
+    // 1. Initialize workflow state
+    state := NewWorkflowState(input)
+    
+    // 2. Register data handlers
+    if err := ti.registerDataHandlers(ctx, state); err != nil {
+        return fmt.Errorf("failed to register handlers: %w", err)
+    }
 
-### Network Efficiency
+    // 3. Start monitoring
+    return ti.monitorExecution(ctx, state)
+}
+```
 
-- **Challenge**: Network congestion with multiple transfers
-- **Solution**: Implement adaptive batch sizing and compression
+### 2. Arrow Flight Integration
 
-  ```go
-  type AdaptiveBatcher struct {
-      windowSize time.Duration
-      compression float64
-      metrics *NetworkMetrics
-  }
-  ```
+```go
+type FlightIntegration struct {
+    coordinator  *FlightCoordinator
+    security    *SecurityManager
+    metrics     *SystemMetrics
+}
 
-### Fault Tolerance
+func (fi *FlightIntegration) HandleDataTransfer(ctx context.Context, action *flight.Action) (*flight.Result, error) {
+    // 1. Secure the transfer
+    secureCtx, err := fi.security.SecureContext(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("security context creation failed: %w", err)
+    }
 
-- **Challenge**: System-wide consistency during failures
-- **Solution**: Implement distributed consensus with etcd
+    // 2. Process transfer
+    result, err := fi.coordinator.ProcessTransfer(secureCtx, action)
+    if err != nil {
+        return nil, fmt.Errorf("transfer processing failed: %w", err)
+    }
 
-  ```go
-  type ConsensusManager struct {
-      etcd *clientv3.Client
-      lease clientv3.Lease
-      election *election.Election
-  }
-  ```
+    // 3. Record metrics
+    fi.metrics.RecordTransfer(ctx, result)
+
+    return result, nil
+}
+```
+
+### 3. Badgers Integration
+
+```go
+type BadgersIntegration struct {
+    flightAdapter *BadgersFlightAdapter
+    optimizer     *QueryOptimizer
+    metrics      *SystemMetrics
+}
+
+func (bi *BadgersIntegration) ProcessDataFrame(ctx context.Context, frame *badgers.DataFrame) error {
+    // 1. Optimize operations
+    optimizedOps, err := bi.optimizer.OptimizeOperations(ctx, frame.Operations())
+    if err != nil {
+        return fmt.Errorf("optimization failed: %w", err)
+    }
+
+    // 2. Execute with monitoring
+    result, err := bi.executeWithMonitoring(ctx, frame, optimizedOps)
+    if err != nil {
+        return fmt.Errorf("execution failed: %w", err)
+    }
+
+    // 3. Update metrics
+    bi.metrics.RecordProcessing(ctx, result)
+
+    return nil
+}
+```
 
 ## Success Metrics and Monitoring
 
@@ -255,14 +410,6 @@ type HealthCheck interface {
     Priority() int
 }
 ```
-
-## Next Steps
-
-1. Begin implementation of the checkpointing system
-2. Set up monitoring and metrics collection
-3. Implement basic security controls
-4. Create test suite for durability scenarios
-5. Document architecture and operational procedures
 
 ## Risk Mitigation
 
